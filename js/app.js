@@ -18,10 +18,6 @@ const ROOM_ID = "general";
 const HEARTBEAT_MS = 20000;
 const STALE_MS = 45000; // si no hay heartbeat en este tiempo, se considera desconectado
 const SWEEP_INTERVAL_MS = 15000;
-
-// Modo moderador: entrar con ?mod=nexus2026 en la URL. Esto NO es seguridad real
-// (cualquiera que lea este archivo puede ver la clave); solo evita que un usuario
-// comun lo active por accidente.
 const MODERATOR_KEY = "nexus2026";
 const isModerator = new URLSearchParams(window.location.search).get("mod") === MODERATOR_KEY;
 
