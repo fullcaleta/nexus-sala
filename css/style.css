@@ -135,6 +135,18 @@ body {
   font-size: 0.85rem;
 }
 
+.consent-notice {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-glass);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
 .btn {
   cursor: pointer;
   border: none;
@@ -291,6 +303,10 @@ body {
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.video-tile.cam-off-preview video {
+  visibility: hidden;
 }
 
 .video-tile video {
