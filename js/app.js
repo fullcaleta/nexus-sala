@@ -111,7 +111,10 @@ function removeVideoTile(peerId) {
 
 function renderMemberList() {
   els.memberList.innerHTML = "";
-  const visible = [...knownMembers.entries()].filter(([id, info]) => !info.hidden || id === userId);
+  const now = Date.now();
+  const visible = [...knownMembers.entries()].filter(
+    ([id, info]) => (!info.hidden || id === userId) && (id === userId || now - info.lastSeen <= STALE_MS)
+  );
   els.memberCount.textContent = visible.length;
   for (const [id, info] of visible) {
     const li = document.createElement("li");
