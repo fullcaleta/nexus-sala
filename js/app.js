@@ -19,6 +19,12 @@ const HEARTBEAT_MS = 20000;
 const STALE_MS = 45000; // si no hay heartbeat en este tiempo, se considera desconectado
 const SWEEP_INTERVAL_MS = 15000;
 
+// Modo moderador: entrar con ?mod=nexus2026 en la URL. Esto NO es seguridad real
+// (cualquiera que lea este archivo puede ver la clave); solo evita que un usuario
+// comun lo active por accidente.
+const MODERATOR_KEY = "nexus2026";
+const isModerator = new URLSearchParams(window.location.search).get("mod") === MODERATOR_KEY;
+
 const els = {
   joinScreen: document.getElementById("join-screen"),
   roomScreen: document.getElementById("room-screen"),
@@ -61,6 +67,7 @@ let heartbeatTimer = null;
 let sweepTimer = null;
 let unsubscribePresence = null;
 let unsubscribeMessages = null;
+let unsubscribeKicked = null;
 const knownMembers = new Map(); // peerId -> { name, lastSeen (ms) }
 
 function toMillis(timestamp) {
@@ -89,7 +96,7 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 
   const label = document.createElement("span");
   label.className = "video-tile-label";
-  label.textContent = isSelf ? `${name} (tú)` : name;
+  label.textContent = isSelf ? `${name} (tú${isModerator ? " · invisible" : ""})` : name;
 
   tile.appendChild(video);
   tile.appendChild(label);
@@ -104,14 +111,33 @@ function removeVideoTile(peerId) {
 
 function renderMemberList() {
   els.memberList.innerHTML = "";
-  els.memberCount.textContent = knownMembers.size;
-  for (const [id, info] of knownMembers) {
+  const visible = [...knownMembers.entries()].filter(([id, info]) => !info.hidden || id === userId);
+  els.memberCount.textContent = visible.length;
+  for (const [id, info] of visible) {
     const li = document.createElement("li");
     li.className = "member-item";
-    li.innerHTML = `<span class="status-dot"></span>${escapeHtml(info.name)}${
+    li.innerHTML = `<span class="status-dot"></span><span class="member-name">${escapeHtml(info.name)}${
       id === userId ? " <em>(tú)</em>" : ""
-    }`;
+    }</span>`;
+    if (isModerator && id !== userId) {
+      const kickBtn = document.createElement("button");
+      kickBtn.className = "btn-kick";
+      kickBtn.title = "Expulsar de la sala";
+      kickBtn.textContent = "✕";
+      kickBtn.addEventListener("click", () => kickMember(id, info.name));
+      li.appendChild(kickBtn);
+    }
     els.memberList.appendChild(li);
+  }
+}
+
+async function kickMember(peerId, name) {
+  if (!confirm(`¿Expulsar a ${name} de la sala?`)) return;
+  try {
+    await setDoc(doc(db, "rooms", ROOM_ID, "kicked", peerId), { at: serverTimestamp() });
+    await deleteDoc(doc(db, "rooms", ROOM_ID, "presence", peerId));
+  } catch (err) {
+    console.warn("No se pudo expulsar al usuario:", err);
   }
 }
 
@@ -150,11 +176,22 @@ async function getLocalMedia() {
 }
 
 async function joinRoom() {
+  const kickedRef = doc(db, "rooms", ROOM_ID, "kicked", userId);
+
   const presenceRef = doc(db, "rooms", ROOM_ID, "presence", userId);
   await setDoc(presenceRef, {
     name: username,
     joinedAt: serverTimestamp(),
     lastSeen: serverTimestamp(),
+    hidden: isModerator,
+  });
+
+  const roomEnteredAt = Date.now();
+  unsubscribeKicked = onSnapshot(kickedRef, (snap) => {
+    if (snap.exists() && toMillis(snap.data().at) > roomEnteredAt) {
+      alert("Fuiste expulsado de la sala por un moderador.");
+      cleanupAndReturnToJoinScreen();
+    }
   });
 
   heartbeatTimer = setInterval(() => {
@@ -176,8 +213,9 @@ async function joinRoom() {
     userId,
     localStream,
     onRemoteStream: (peerId, stream) => {
-      const name = knownMembers.get(peerId)?.name || "Usuario";
-      const video = createVideoTile(peerId, name);
+      const info = knownMembers.get(peerId);
+      if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
+      const video = createVideoTile(peerId, info?.name || "Usuario");
       video.srcObject = stream;
     },
     onRemoveStream: (peerId) => removeVideoTile(peerId),
@@ -191,7 +229,7 @@ async function joinRoom() {
       if (change.type === "added" || change.type === "modified") {
         const lastSeen = toMillis(data.lastSeen);
         const isFresh = Date.now() - lastSeen < STALE_MS;
-        knownMembers.set(peerId, { name: data.name, lastSeen });
+        knownMembers.set(peerId, { name: data.name, lastSeen, hidden: !!data.hidden });
         if (change.type === "added" && isFresh) {
           webrtcManager.handlePeerJoined(peerId);
         }
@@ -231,6 +269,7 @@ function cleanupAndReturnToJoinScreen() {
   clearInterval(sweepTimer);
   if (unsubscribePresence) unsubscribePresence();
   if (unsubscribeMessages) unsubscribeMessages();
+  if (unsubscribeKicked) unsubscribeKicked();
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   els.videoGrid.innerHTML = "";
