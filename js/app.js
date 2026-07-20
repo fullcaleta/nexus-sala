@@ -16,6 +16,8 @@ import { createWebRTCManager } from "./webrtc.js";
 
 const ROOM_ID = "general";
 const HEARTBEAT_MS = 20000;
+const STALE_MS = 45000; // si no hay heartbeat en este tiempo, se considera desconectado
+const SWEEP_INTERVAL_MS = 15000;
 
 const els = {
   joinScreen: document.getElementById("join-screen"),
@@ -56,9 +58,15 @@ let username = "";
 let localStream = null;
 let webrtcManager = null;
 let heartbeatTimer = null;
+let sweepTimer = null;
 let unsubscribePresence = null;
 let unsubscribeMessages = null;
-const knownMembers = new Map(); // peerId -> name
+const knownMembers = new Map(); // peerId -> { name, lastSeen (ms) }
+
+function toMillis(timestamp) {
+  if (timestamp && typeof timestamp.toMillis === "function") return timestamp.toMillis();
+  return Date.now();
+}
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -97,14 +105,29 @@ function removeVideoTile(peerId) {
 function renderMemberList() {
   els.memberList.innerHTML = "";
   els.memberCount.textContent = knownMembers.size;
-  for (const [id, name] of knownMembers) {
+  for (const [id, info] of knownMembers) {
     const li = document.createElement("li");
     li.className = "member-item";
-    li.innerHTML = `<span class="status-dot"></span>${escapeHtml(name)}${
+    li.innerHTML = `<span class="status-dot"></span>${escapeHtml(info.name)}${
       id === userId ? " <em>(tú)</em>" : ""
     }`;
     els.memberList.appendChild(li);
   }
+}
+
+function sweepStaleMembers() {
+  const now = Date.now();
+  let changed = false;
+  for (const [peerId, info] of knownMembers) {
+    if (peerId === userId) continue;
+    if (now - info.lastSeen > STALE_MS) {
+      knownMembers.delete(peerId);
+      webrtcManager.handlePeerLeft(peerId);
+      removeVideoTile(peerId);
+      changed = true;
+    }
+  }
+  if (changed) renderMemberList();
 }
 
 function renderMessage({ name, text, userId: authorId }) {
@@ -153,7 +176,7 @@ async function joinRoom() {
     userId,
     localStream,
     onRemoteStream: (peerId, stream) => {
-      const name = knownMembers.get(peerId) || "Usuario";
+      const name = knownMembers.get(peerId)?.name || "Usuario";
       const video = createVideoTile(peerId, name);
       video.srcObject = stream;
     },
@@ -164,11 +187,14 @@ async function joinRoom() {
   unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
     for (const change of snapshot.docChanges()) {
       const peerId = change.doc.id;
-      if (change.type === "added") {
-        knownMembers.set(peerId, change.doc.data().name);
-        webrtcManager.handlePeerJoined(peerId);
-      } else if (change.type === "modified") {
-        knownMembers.set(peerId, change.doc.data().name);
+      const data = change.doc.data();
+      if (change.type === "added" || change.type === "modified") {
+        const lastSeen = toMillis(data.lastSeen);
+        const isFresh = Date.now() - lastSeen < STALE_MS;
+        knownMembers.set(peerId, { name: data.name, lastSeen });
+        if (change.type === "added" && isFresh) {
+          webrtcManager.handlePeerJoined(peerId);
+        }
       } else if (change.type === "removed") {
         knownMembers.delete(peerId);
         webrtcManager.handlePeerLeft(peerId);
@@ -177,6 +203,8 @@ async function joinRoom() {
     }
     renderMemberList();
   });
+
+  sweepTimer = setInterval(sweepStaleMembers, SWEEP_INTERVAL_MS);
 
   const messagesCol = collection(db, "rooms", ROOM_ID, "messages");
   const messagesQuery = query(messagesCol, orderBy("createdAt", "asc"), limit(200));
@@ -187,6 +215,7 @@ async function joinRoom() {
   });
 
   window.addEventListener("beforeunload", leaveRoom);
+  window.addEventListener("pagehide", leaveRoom);
 }
 
 async function leaveRoom() {
@@ -199,6 +228,7 @@ async function leaveRoom() {
 
 function cleanupAndReturnToJoinScreen() {
   clearInterval(heartbeatTimer);
+  clearInterval(sweepTimer);
   if (unsubscribePresence) unsubscribePresence();
   if (unsubscribeMessages) unsubscribeMessages();
   if (webrtcManager) webrtcManager.destroy();
@@ -215,7 +245,7 @@ els.joinForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const value = els.usernameInput.value.trim();
   if (!value) {
-    els.joinError.textContent = "Ingresá un nombre para entrar a la sala.";
+    els.joinError.textContent = "Ingresa un nombre para entrar a la sala.";
     return;
   }
   els.joinError.textContent = "";
