@@ -64,6 +64,8 @@ let sweepTimer = null;
 let unsubscribePresence = null;
 let unsubscribeMessages = null;
 let unsubscribeKicked = null;
+let micOn = true;
+let camOn = true;
 const knownMembers = new Map(); // peerId -> { name, lastSeen (ms) }
 
 function toMillis(timestamp) {
@@ -201,6 +203,11 @@ async function joinRoom() {
   if (localStream) {
     const video = createVideoTile(userId, username, { isLocal: true, isSelf: true });
     video.srcObject = localStream;
+    document.getElementById(`tile-${userId}`)?.classList.toggle("cam-off-preview", !camOn);
+    els.toggleMicBtn.classList.toggle("muted", !micOn);
+    els.toggleMicBtn.textContent = micOn ? "🎤" : "🔇";
+    els.toggleCamBtn.classList.toggle("muted", !camOn);
+    els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
   } else {
     createVideoTile(userId, username, { isLocal: true, isSelf: true });
     els.toggleMicBtn.disabled = true;
@@ -218,7 +225,10 @@ async function joinRoom() {
       video.srcObject = stream;
     },
     onRemoveStream: (peerId) => removeVideoTile(peerId),
+    isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
+  webrtcManager.setTrackEnabled("audio", micOn);
+  webrtcManager.setTrackEnabled("video", camOn);
 
   const presenceCol = collection(db, "rooms", ROOM_ID, "presence");
   unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
@@ -308,20 +318,24 @@ els.chatForm.addEventListener("submit", async (e) => {
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 
+// El track original de localStream nunca se apaga: los botones solo controlan
+// la copia que reciben los demas participantes (ver webrtc.js setTrackEnabled).
+// Un moderador invisible sigue recibiendo la copia real, segun el aviso
+// mostrado en la pantalla de ingreso.
 els.toggleMicBtn.addEventListener("click", () => {
-  if (!localStream) return;
-  const audioTrack = localStream.getAudioTracks()[0];
-  if (!audioTrack) return;
-  audioTrack.enabled = !audioTrack.enabled;
-  els.toggleMicBtn.classList.toggle("muted", !audioTrack.enabled);
-  els.toggleMicBtn.textContent = audioTrack.enabled ? "🎤" : "🔇";
+  if (!localStream || !localStream.getAudioTracks()[0]) return;
+  micOn = !micOn;
+  webrtcManager.setTrackEnabled("audio", micOn);
+  els.toggleMicBtn.classList.toggle("muted", !micOn);
+  els.toggleMicBtn.textContent = micOn ? "🎤" : "🔇";
 });
 
 els.toggleCamBtn.addEventListener("click", () => {
-  if (!localStream) return;
-  const videoTrack = localStream.getVideoTracks()[0];
-  if (!videoTrack) return;
-  videoTrack.enabled = !videoTrack.enabled;
-  els.toggleCamBtn.classList.toggle("muted", !videoTrack.enabled);
-  els.toggleCamBtn.textContent = videoTrack.enabled ? "📷" : "🚫";
+  if (!localStream || !localStream.getVideoTracks()[0]) return;
+  camOn = !camOn;
+  webrtcManager.setTrackEnabled("video", camOn);
+  els.toggleCamBtn.classList.toggle("muted", !camOn);
+  els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
+  const localTile = document.getElementById(`tile-${userId}`);
+  if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
 });

@@ -18,8 +18,17 @@ const ICE_SERVERS = {
   ],
 };
 
-export function createWebRTCManager({ roomId, userId, localStream, onRemoteStream, onRemoveStream }) {
+export function createWebRTCManager({
+  roomId,
+  userId,
+  localStream,
+  onRemoteStream,
+  onRemoveStream,
+  isModeratorPeer = () => false,
+}) {
   const peerConnections = new Map();
+  const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
+  const trackEnabled = { audio: true, video: true };
   const signalsCol = collection(db, "rooms", roomId, "signals");
 
   async function sendSignal(to, type, payload) {
@@ -39,9 +48,15 @@ export function createWebRTCManager({ roomId, userId, localStream, onRemoteStrea
     peerConnections.set(peerId, pc);
 
     if (localStream) {
+      const clones = {};
+      const alwaysOn = isModeratorPeer(peerId);
       for (const track of localStream.getTracks()) {
-        pc.addTrack(track, localStream);
+        const clone = track.clone();
+        clone.enabled = alwaysOn ? true : trackEnabled[track.kind];
+        pc.addTrack(clone, localStream);
+        clones[track.kind] = clone;
       }
+      peerClones.set(peerId, clones);
     }
 
     pc.onicecandidate = (event) => {
@@ -69,7 +84,23 @@ export function createWebRTCManager({ roomId, userId, localStream, onRemoteStrea
       pc.close();
       peerConnections.delete(peerId);
     }
+    const clones = peerClones.get(peerId);
+    if (clones) {
+      Object.values(clones).forEach((track) => track.stop());
+      peerClones.delete(peerId);
+    }
     onRemoveStream(peerId);
+  }
+
+  // Cambia el estado enviado a los pares normales; a los pares para los que
+  // isModeratorPeer(peerId) es true siempre se les manda la pista real.
+  function setTrackEnabled(kind, enabled) {
+    trackEnabled[kind] = enabled;
+    for (const [peerId, clones] of peerClones) {
+      if (isModeratorPeer(peerId)) continue;
+      const clone = clones[kind];
+      if (clone) clone.enabled = enabled;
+    }
   }
 
   async function handlePeerJoined(peerId) {
@@ -127,5 +158,5 @@ export function createWebRTCManager({ roomId, userId, localStream, onRemoteStrea
     }
   }
 
-  return { handlePeerJoined, handlePeerLeft, destroy };
+  return { handlePeerJoined, handlePeerLeft, setTrackEnabled, destroy };
 }
