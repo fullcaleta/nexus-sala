@@ -34,10 +34,18 @@ const els = {
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
 };
 
+function generateId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  // Fallback: crypto.randomUUID solo existe en contextos seguros (HTTPS/localhost).
+  return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 function getUserId() {
   let id = sessionStorage.getItem("userId");
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateId();
     sessionStorage.setItem("userId", id);
   }
   return id;
@@ -73,7 +81,7 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 
   const label = document.createElement("span");
   label.className = "video-tile-label";
-  label.textContent = isSelf ? `${name} (vos)` : name;
+  label.textContent = isSelf ? `${name} (tú)` : name;
 
   tile.appendChild(video);
   tile.appendChild(label);
@@ -93,7 +101,7 @@ function renderMemberList() {
     const li = document.createElement("li");
     li.className = "member-item";
     li.innerHTML = `<span class="status-dot"></span>${escapeHtml(name)}${
-      id === userId ? " <em>(vos)</em>" : ""
+      id === userId ? " <em>(tú)</em>" : ""
     }`;
     els.memberList.appendChild(li);
   }
