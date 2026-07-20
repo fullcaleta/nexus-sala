@@ -11,27 +11,31 @@ import {
   serverTimestamp,
 } from "./db.js";
 
+// Servidor TURN (retransmisor) propio en Metered.ca. Sin esto, usuarios detras
+// de redes restrictivas (datos moviles, ciertos wifi/NAT) nunca logran conectar
+// la camara/microfono con nadie, aunque el resto del grupo funcione bien.
 const ICE_SERVERS = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    // Servidor TURN (retransmisor) gratuito de Open Relay Project. Sin esto,
-    // usuarios detras de redes restrictivas (datos moviles, ciertos wifi)
-    // nunca logran conectar la camara/microfono con nadie.
+    { urls: "stun:stun.relay.metered.ca:80" },
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:global.relay.metered.ca:80",
+      username: "5244766bbe80a7fa57ef222c",
+      credential: "y4BYKptMPrOjNqcI",
     },
     {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:global.relay.metered.ca:80?transport=tcp",
+      username: "5244766bbe80a7fa57ef222c",
+      credential: "y4BYKptMPrOjNqcI",
     },
     {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: "turn:global.relay.metered.ca:443",
+      username: "5244766bbe80a7fa57ef222c",
+      credential: "y4BYKptMPrOjNqcI",
+    },
+    {
+      urls: "turns:global.relay.metered.ca:443?transport=tcp",
+      username: "5244766bbe80a7fa57ef222c",
+      credential: "y4BYKptMPrOjNqcI",
     },
   ],
 };
