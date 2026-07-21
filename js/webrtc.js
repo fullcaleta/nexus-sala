@@ -142,6 +142,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     // la recibe y contesta. Esto no afecta renegociaciones posteriores (por
     // ejemplo al activar la camara mas tarde), que ya sabian resolver una
     // colision ocasional.
+    console.log("[NEXUS-DEBUG] conexion creada con", peerId, "polite:", isPolite(peerId));
     if (!isPolite(peerId)) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
@@ -149,10 +150,12 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     };
 
     pc.ontrack = (event) => {
+      console.log("[NEXUS-DEBUG] ontrack de", peerId, event.track.kind, event.track.readyState);
       onRemoteStream(peerId, event.streams[0]);
     };
 
     pc.onconnectionstatechange = () => {
+      console.log("[NEXUS-DEBUG] connectionState con", peerId, ":", pc.connectionState);
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         closePeer(peerId);
       }

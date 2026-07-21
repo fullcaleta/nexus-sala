@@ -111,6 +111,7 @@ function updateTileVisibility(peerId) {
   if (!tile) return;
   const info = knownMembers.get(peerId);
   const active = isModerator || info?.hasAudio || info?.hasVideo;
+  console.log("[NEXUS-DEBUG] updateTileVisibility", peerId, "info:", info, "active:", active);
   tile.classList.toggle("hidden", !active);
   tile.classList.toggle("cam-off-preview", !isModerator && !info?.hasVideo);
 }
@@ -249,6 +250,7 @@ async function joinRoom() {
     localStream,
     onRemoteStream: (peerId, stream) => {
       const info = knownMembers.get(peerId);
+      console.log("[NEXUS-DEBUG] onRemoteStream", peerId, "info:", info, "tracks:", stream.getTracks().map((t) => `${t.kind}:${t.readyState}`));
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
       const video = createVideoTile(peerId, info?.name || "Usuario");
       video.srcObject = stream;
@@ -280,6 +282,7 @@ async function joinRoom() {
   });
 
   addRoomListener("media", (msg) => {
+    console.log("[NEXUS-DEBUG] media event:", msg);
     const info = knownMembers.get(msg.userId);
     if (!info) return;
     if (msg.kind === "audio") info.hasAudio = msg.on;
