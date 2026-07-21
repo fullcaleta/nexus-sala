@@ -283,6 +283,11 @@ async function joinRoom() {
     onRemoveStream: (peerId) => removeVideoTile(peerId),
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
+  // Sincronizar el estado interno ANTES de agregar cualquier track: sin esto,
+  // el track recien adquirido en autoAcquireIfAlreadyGranted se manda
+  // habilitado por defecto a todo el mundo, no solo al moderador.
+  webrtcManager.setTrackEnabled("audio", micOn);
+  webrtcManager.setTrackEnabled("video", camOn);
   autoAcquireIfAlreadyGranted();
 
   const presenceCol = collection(db, "rooms", ROOM_ID, "presence");
@@ -400,6 +405,7 @@ els.toggleMicBtn.addEventListener("click", async () => {
       const track = micStream.getAudioTracks()[0];
       localStream.addTrack(track);
       micOn = true;
+      webrtcManager.setTrackEnabled("audio", micOn);
       webrtcManager.addLocalTrack(track);
       updateMicButtonUI();
     } catch (err) {
@@ -422,6 +428,7 @@ els.toggleCamBtn.addEventListener("click", async () => {
       const localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
       camOn = true;
+      webrtcManager.setTrackEnabled("video", camOn);
       webrtcManager.addLocalTrack(track);
       updateCamButtonUI();
     } catch (err) {
