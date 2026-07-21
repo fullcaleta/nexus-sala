@@ -1,5 +1,5 @@
-import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=4";
+import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js?v=5";
+import { createWebRTCManager } from "./webrtc.js?v=5";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -411,19 +411,39 @@ els.switchCamBtn.addEventListener("click", async () => {
   const oldTrack = localStream.getVideoTracks()[0];
   if (!oldTrack) return;
   const newFacing = facingMode === "user" ? "environment" : "user";
+  let newStream;
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newFacing } });
-    const newTrack = newStream.getVideoTracks()[0];
-    localStream.removeTrack(oldTrack);
-    oldTrack.stop();
-    localStream.addTrack(newTrack);
-    const localVideoEl = document.querySelector(`#tile-${userId} video`);
-    if (localVideoEl) localVideoEl.srcObject = localStream;
-    webrtcManager.replaceLocalVideoTrack(newTrack);
-    facingMode = newFacing;
+    // Se pide como preferencia (no exigencia): si el dispositivo solo tiene
+    // una camara o no distingue frontal/trasera, igual entrega esa camara en
+    // vez de fallar.
+    newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: newFacing } } });
   } catch (err) {
-    console.error("[NEXUS-DEBUG] error al cambiar de camara:", err.name, err.message);
-    alert("No se pudo cambiar de cámara en este dispositivo.");
+    try {
+      // Plan B: algunos dispositivos (ej. camaras de PC/USB) rechazan
+      // cualquier restriccion de facingMode. Se pide la camara sin esa
+      // restriccion; si hay mas de una, el navegador da la que tenga por
+      // defecto.
+      newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    } catch (err2) {
+      console.error("[NEXUS-DEBUG] error al cambiar de camara:", err2.name, err2.message);
+      alert("No se pudo cambiar de cámara en este dispositivo.");
+      return;
+    }
+  }
+  const newTrack = newStream.getVideoTracks()[0];
+  localStream.removeTrack(oldTrack);
+  oldTrack.stop();
+  localStream.addTrack(newTrack);
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  facingMode = newFacing;
+  try {
+    webrtcManager.replaceLocalVideoTrack(newTrack);
+  } catch (err) {
+    // El cambio local ya se aplico (se ve tu propia camara nueva); si esto
+    // falla, a lo sumo los demas siguen viendo el video anterior un poco mas
+    // hasta la proxima renegociacion, no vale la pena mostrar un error.
+    console.error("[NEXUS-DEBUG] error al avisar el cambio de camara a los demas:", err);
   }
 });
 
