@@ -36,6 +36,8 @@ const els = {
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
+  switchCamBtn: document.getElementById("switch-cam-btn"),
+  notifyBtn: document.getElementById("notify-btn"),
 };
 
 function generateId() {
@@ -57,16 +59,20 @@ function getUserId() {
 
 const userId = getUserId();
 let username = "";
-let localStream = null;
+let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
 let heartbeatTimer = null;
 let sweepTimer = null;
 let unsubscribePresence = null;
 let unsubscribeMessages = null;
 let unsubscribeKicked = null;
-let micOn = true;
-let camOn = true;
-const knownMembers = new Map(); // peerId -> { name, lastSeen (ms) }
+let micOn = false;
+let camOn = false;
+let facingMode = "user";
+let notificationsEnabled = false;
+let hasSeenInitialPresence = false;
+let hasSeenInitialMessages = false;
+const knownMembers = new Map(); // peerId -> { name, lastSeen (ms), hidden }
 
 function toMillis(timestamp) {
   if (timestamp && typeof timestamp.toMillis === "function") return timestamp.toMillis();
@@ -77,6 +83,19 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// Notifica solo si el usuario lo activo y no esta con la pestaña enfocada
+// (si ya la esta mirando, no hace falta molestarlo). El "tag" hace que varias
+// notificaciones seguidas del mismo tipo se reemplacen entre si en vez de
+// amontonarse.
+function notify(title, body, tag) {
+  if (!notificationsEnabled || document.hasFocus()) return;
+  try {
+    new Notification(title, { body, tag });
+  } catch (err) {
+    console.warn("No se pudo mostrar la notificación:", err);
+  }
 }
 
 function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {}) {
@@ -167,13 +186,17 @@ function renderMessage({ name, text, userId: authorId }) {
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
 
-async function getLocalMedia() {
-  try {
-    return await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  } catch (err) {
-    console.warn("No se pudo acceder a cámara/micrófono:", err);
-    return null;
-  }
+function updateMicButtonUI() {
+  els.toggleMicBtn.classList.toggle("muted", !micOn);
+  els.toggleMicBtn.textContent = micOn ? "🎤" : "🔇";
+}
+
+function updateCamButtonUI() {
+  els.toggleCamBtn.classList.toggle("muted", !camOn);
+  els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
+  els.switchCamBtn.disabled = !camOn;
+  const localTile = document.getElementById(`tile-${userId}`);
+  if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
 }
 
 async function joinRoom() {
@@ -199,20 +222,11 @@ async function joinRoom() {
     updateDoc(presenceRef, { lastSeen: serverTimestamp() }).catch(() => {});
   }, HEARTBEAT_MS);
 
-  localStream = await getLocalMedia();
-  if (localStream) {
-    const video = createVideoTile(userId, username, { isLocal: true, isSelf: true });
-    video.srcObject = localStream;
-    document.getElementById(`tile-${userId}`)?.classList.toggle("cam-off-preview", !camOn);
-    els.toggleMicBtn.classList.toggle("muted", !micOn);
-    els.toggleMicBtn.textContent = micOn ? "🎤" : "🔇";
-    els.toggleCamBtn.classList.toggle("muted", !camOn);
-    els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
-  } else {
-    createVideoTile(userId, username, { isLocal: true, isSelf: true });
-    els.toggleMicBtn.disabled = true;
-    els.toggleCamBtn.disabled = true;
-  }
+  // Se entra a la sala solo con chat: sin pedir camara ni microfono todavia.
+  localStream = new MediaStream();
+  createVideoTile(userId, username, { isLocal: true, isSelf: true });
+  updateMicButtonUI();
+  updateCamButtonUI();
 
   webrtcManager = createWebRTCManager({
     roomId: ROOM_ID,
@@ -227,8 +241,6 @@ async function joinRoom() {
     onRemoveStream: (peerId) => removeVideoTile(peerId),
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
-  webrtcManager.setTrackEnabled("audio", micOn);
-  webrtcManager.setTrackEnabled("video", camOn);
 
   const presenceCol = collection(db, "rooms", ROOM_ID, "presence");
   unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
@@ -241,6 +253,9 @@ async function joinRoom() {
         knownMembers.set(peerId, { name: data.name, lastSeen, hidden: !!data.hidden });
         if (change.type === "added" && isFresh) {
           webrtcManager.handlePeerJoined(peerId);
+          if (hasSeenInitialPresence && peerId !== userId && !data.hidden) {
+            notify("Nexus", `${data.name} entró a la sala`, "nexus-presence");
+          }
         }
       } else if (change.type === "removed") {
         knownMembers.delete(peerId);
@@ -248,6 +263,7 @@ async function joinRoom() {
         removeVideoTile(peerId);
       }
     }
+    hasSeenInitialPresence = true;
     renderMemberList();
   });
 
@@ -257,8 +273,15 @@ async function joinRoom() {
   const messagesQuery = query(messagesCol, orderBy("createdAt", "asc"), limit(200));
   unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
     for (const change of snapshot.docChanges()) {
-      if (change.type === "added") renderMessage(change.doc.data());
+      if (change.type === "added") {
+        const data = change.doc.data();
+        renderMessage(data);
+        if (hasSeenInitialMessages && data.userId !== userId) {
+          notify(data.name, data.text, "nexus-chat");
+        }
+      }
     }
+    hasSeenInitialMessages = true;
   });
 
   window.addEventListener("beforeunload", leaveRoom);
@@ -284,6 +307,10 @@ function cleanupAndReturnToJoinScreen() {
   els.videoGrid.innerHTML = "";
   els.chatMessages.innerHTML = "";
   knownMembers.clear();
+  hasSeenInitialPresence = false;
+  hasSeenInitialMessages = false;
+  micOn = false;
+  camOn = false;
   leaveRoom();
   els.roomScreen.classList.add("hidden");
   els.joinScreen.classList.remove("hidden");
@@ -320,22 +347,85 @@ els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 
 // El track original de localStream nunca se apaga: los botones solo controlan
 // la copia que reciben los demas participantes (ver webrtc.js setTrackEnabled).
-// Un moderador invisible sigue recibiendo la copia real, segun el aviso
-// mostrado en la pantalla de ingreso.
-els.toggleMicBtn.addEventListener("click", () => {
-  if (!localStream || !localStream.getAudioTracks()[0]) return;
+// Un moderador invisible sigue recibiendo la copia real de lo que el usuario
+// haya autorizado, segun el aviso mostrado en la pantalla de ingreso.
+els.toggleMicBtn.addEventListener("click", async () => {
+  const existingTrack = localStream.getAudioTracks()[0];
+  if (!existingTrack) {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const track = micStream.getAudioTracks()[0];
+      localStream.addTrack(track);
+      micOn = true;
+      webrtcManager.addLocalTrack(track);
+      updateMicButtonUI();
+    } catch (err) {
+      alert("No se pudo acceder al micrófono. Revisá los permisos del navegador.");
+    }
+    return;
+  }
   micOn = !micOn;
   webrtcManager.setTrackEnabled("audio", micOn);
-  els.toggleMicBtn.classList.toggle("muted", !micOn);
-  els.toggleMicBtn.textContent = micOn ? "🎤" : "🔇";
+  updateMicButtonUI();
 });
 
-els.toggleCamBtn.addEventListener("click", () => {
-  if (!localStream || !localStream.getVideoTracks()[0]) return;
+els.toggleCamBtn.addEventListener("click", async () => {
+  const existingTrack = localStream.getVideoTracks()[0];
+  if (!existingTrack) {
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      const track = camStream.getVideoTracks()[0];
+      localStream.addTrack(track);
+      const localVideoEl = document.querySelector(`#tile-${userId} video`);
+      if (localVideoEl) localVideoEl.srcObject = localStream;
+      camOn = true;
+      webrtcManager.addLocalTrack(track);
+      updateCamButtonUI();
+    } catch (err) {
+      alert("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
+    }
+    return;
+  }
   camOn = !camOn;
   webrtcManager.setTrackEnabled("video", camOn);
-  els.toggleCamBtn.classList.toggle("muted", !camOn);
-  els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
-  const localTile = document.getElementById(`tile-${userId}`);
-  if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
+  updateCamButtonUI();
+});
+
+els.switchCamBtn.addEventListener("click", async () => {
+  const oldTrack = localStream.getVideoTracks()[0];
+  if (!oldTrack) return;
+  const newFacing = facingMode === "user" ? "environment" : "user";
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newFacing } });
+    const newTrack = newStream.getVideoTracks()[0];
+    localStream.removeTrack(oldTrack);
+    oldTrack.stop();
+    localStream.addTrack(newTrack);
+    const localVideoEl = document.querySelector(`#tile-${userId} video`);
+    if (localVideoEl) localVideoEl.srcObject = localStream;
+    webrtcManager.replaceLocalVideoTrack(newTrack);
+    facingMode = newFacing;
+  } catch (err) {
+    alert("No se pudo cambiar de cámara en este dispositivo.");
+  }
+});
+
+els.notifyBtn.addEventListener("click", async () => {
+  if (!("Notification" in window)) {
+    alert("Tu navegador no soporta notificaciones.");
+    return;
+  }
+  if (notificationsEnabled) {
+    notificationsEnabled = false;
+    els.notifyBtn.classList.remove("active");
+    els.notifyBtn.textContent = "🔕";
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  notificationsEnabled = permission === "granted";
+  els.notifyBtn.classList.toggle("active", notificationsEnabled);
+  els.notifyBtn.textContent = notificationsEnabled ? "🔔" : "🔕";
+  if (permission === "denied") {
+    alert("Bloqueaste las notificaciones para este sitio. Para activarlas, cambiá el permiso desde la configuración del navegador.");
+  }
 });
