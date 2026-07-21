@@ -1,5 +1,5 @@
-import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js";
-import { createWebRTCManager } from "./webrtc.js";
+import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js?v=3";
+import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
