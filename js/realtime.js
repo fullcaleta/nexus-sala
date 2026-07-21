@@ -1,13 +1,20 @@
 // Cliente del backend propio (reemplaza a Firebase). Se conecta por WebSocket
 // a un servidor que corre en tu PC. En local (probando en tu compu) usa
-// ws://localhost:8080 automaticamente. Una vez que el servidor este expuesto
-// a internet con dominio y HTTPS, completar PUBLIC_SERVER_URL (ver
-// server/README.md) — ahi si tiene que ser wss:// (seguro), porque el sitio
-// se sirve por HTTPS y los navegadores no permiten mezclar HTTPS con un
-// WebSocket inseguro.
+// ws://localhost:8080 automaticamente. El sitio se sirve por HTTPS, asi que
+// en produccion tiene que ser wss:// (seguro) — los navegadores no permiten
+// mezclar HTTPS con un WebSocket inseguro.
 const PUBLIC_SERVER_URL = "wss://nexus-sala.duckdns.org";
 const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 export const SERVER_URL = isLocal ? "ws://localhost:8080" : PUBLIC_SERVER_URL;
+
+// Algunas redes (en particular, dispositivos conectados a la misma red que
+// el servidor) a veces fallan al conectar por un problema del router al
+// "reflejar" la conexion hacia su propia IP publica. No es cosa nuestra,
+// pero como suele ser intermitente (a veces conecta, a veces no), reintentar
+// unas pocas veces antes de rendirse soluciona la mayoria de los casos.
+const MAX_ATTEMPTS = 5;
+const RETRY_DELAY_MS = 1200;
+const CONNECT_TIMEOUT_MS = 5000;
 
 let ws = null;
 const listeners = new Map();
@@ -33,16 +40,23 @@ export function offAll(type) {
   listeners.delete(type);
 }
 
-export function connect(userId, name, modKey) {
+function attemptConnect(userId, name, modKey) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    ws = new WebSocket(SERVER_URL);
+    const socket = new WebSocket(SERVER_URL);
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "join", userId, name, mod: modKey || "" }));
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      socket.close();
+      reject(new Error("timeout"));
+    }, CONNECT_TIMEOUT_MS);
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "join", userId, name, mod: modKey || "" }));
     };
 
-    ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
       let msg;
       try {
         msg = JSON.parse(event.data);
@@ -51,26 +65,46 @@ export function connect(userId, name, modKey) {
       }
       if (msg.type === "welcome" && !settled) {
         settled = true;
+        clearTimeout(timeout);
+        ws = socket;
         resolve(msg);
       }
       emit(msg.type, msg);
     };
 
-    ws.onerror = () => {
-      if (!settled) {
-        settled = true;
-        reject(new Error("No se pudo conectar al servidor."));
-      }
+    socket.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error("connect-failed"));
     };
 
-    ws.onclose = () => {
+    socket.onclose = () => {
       if (!settled) {
         settled = true;
-        reject(new Error("El servidor cerro la conexion antes de tiempo."));
+        clearTimeout(timeout);
+        reject(new Error("connect-failed"));
+        return;
       }
       emit("disconnected", {});
     };
   });
+}
+
+// onRetry(intentoActual, totalIntentos) se llama antes de cada reintento,
+// para que la interfaz pueda mostrar "conectando... (intento 2 de 5)".
+export async function connect(userId, name, modKey, onRetry) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await attemptConnect(userId, name, modKey);
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS) {
+        throw new Error("No se pudo conectar al servidor de la sala.");
+      }
+      onRetry?.(attempt + 1, MAX_ATTEMPTS);
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+    }
+  }
 }
 
 function sendMessage(data) {
