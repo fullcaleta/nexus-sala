@@ -1,25 +1,7 @@
-import {
-  db,
-  collection,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  addDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  limit,
-  serverTimestamp,
-} from "./db.js";
+import { connect, on, sendChat, kickUser, disconnect } from "./realtime.js";
 import { createWebRTCManager } from "./webrtc.js";
 
-const ROOM_ID = "general";
-const HEARTBEAT_MS = 20000;
-const STALE_MS = 45000; // si no hay heartbeat en este tiempo, se considera desconectado
-const SWEEP_INTERVAL_MS = 15000;
-const MODERATOR_KEY = "nexus2026";
-const isModerator = new URLSearchParams(window.location.search).get("mod") === MODERATOR_KEY;
+const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
 const els = {
   joinScreen: document.getElementById("join-screen"),
@@ -59,25 +41,15 @@ function getUserId() {
 
 const userId = getUserId();
 let username = "";
+let isModerator = false;
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
-let heartbeatTimer = null;
-let sweepTimer = null;
-let unsubscribePresence = null;
-let unsubscribeMessages = null;
-let unsubscribeKicked = null;
 let micOn = false;
 let camOn = false;
 let facingMode = "user";
 let notificationsEnabled = false;
-let hasSeenInitialPresence = false;
-let hasSeenInitialMessages = false;
-const knownMembers = new Map(); // peerId -> { name, lastSeen (ms), hidden }
-
-function toMillis(timestamp) {
-  if (timestamp && typeof timestamp.toMillis === "function") return timestamp.toMillis();
-  return Date.now();
-}
+const knownMembers = new Map(); // peerId -> { name, hidden }
+const roomListeners = []; // funciones para darse de baja al salir de la sala
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -128,10 +100,7 @@ function removeVideoTile(peerId) {
 
 function renderMemberList() {
   els.memberList.innerHTML = "";
-  const now = Date.now();
-  const visible = [...knownMembers.entries()].filter(
-    ([id, info]) => (!info.hidden || id === userId) && (id === userId || now - info.lastSeen <= STALE_MS)
-  );
+  const visible = [...knownMembers.entries()].filter(([id, info]) => !info.hidden || id === userId);
   els.memberCount.textContent = visible.length;
   for (const [id, info] of visible) {
     const li = document.createElement("li");
@@ -151,29 +120,9 @@ function renderMemberList() {
   }
 }
 
-async function kickMember(peerId, name) {
+function kickMember(peerId, name) {
   if (!confirm(`¿Expulsar a ${name} de la sala?`)) return;
-  try {
-    await setDoc(doc(db, "rooms", ROOM_ID, "kicked", peerId), { at: serverTimestamp() });
-    await deleteDoc(doc(db, "rooms", ROOM_ID, "presence", peerId));
-  } catch (err) {
-    console.warn("No se pudo expulsar al usuario:", err);
-  }
-}
-
-function sweepStaleMembers() {
-  const now = Date.now();
-  let changed = false;
-  for (const [peerId, info] of knownMembers) {
-    if (peerId === userId) continue;
-    if (now - info.lastSeen > STALE_MS) {
-      knownMembers.delete(peerId);
-      webrtcManager.handlePeerLeft(peerId);
-      removeVideoTile(peerId);
-      changed = true;
-    }
-  }
-  if (changed) renderMemberList();
+  kickUser(peerId);
 }
 
 function renderMessage({ name, text, userId: authorId }) {
@@ -241,37 +190,33 @@ async function autoAcquireIfAlreadyGranted() {
   updateCamButtonUI();
 }
 
+function addRoomListener(type, fn) {
+  roomListeners.push(on(type, fn));
+}
+
 async function joinRoom() {
-  const kickedRef = doc(db, "rooms", ROOM_ID, "kicked", userId);
+  els.joinError.textContent = "";
+  let welcome;
+  try {
+    welcome = await connect(userId, username, modKeyFromUrl);
+  } catch (err) {
+    els.roomScreen.classList.add("hidden");
+    els.joinScreen.classList.remove("hidden");
+    els.joinError.textContent = "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
+    return;
+  }
 
-  const presenceRef = doc(db, "rooms", ROOM_ID, "presence", userId);
-  await setDoc(presenceRef, {
-    name: username,
-    joinedAt: serverTimestamp(),
-    lastSeen: serverTimestamp(),
-    hidden: isModerator,
-  });
+  isModerator = !!welcome.isModerator;
+  for (const member of welcome.members) {
+    knownMembers.set(member.userId, { name: member.name, hidden: !!member.hidden });
+  }
 
-  const roomEnteredAt = Date.now();
-  unsubscribeKicked = onSnapshot(kickedRef, (snap) => {
-    if (snap.exists() && toMillis(snap.data().at) > roomEnteredAt) {
-      alert("Fuiste expulsado de la sala por un moderador.");
-      cleanupAndReturnToJoinScreen();
-    }
-  });
-
-  heartbeatTimer = setInterval(() => {
-    updateDoc(presenceRef, { lastSeen: serverTimestamp() }).catch(() => {});
-  }, HEARTBEAT_MS);
-
-  // Se entra a la sala solo con chat: sin pedir camara ni microfono todavia.
   localStream = new MediaStream();
   createVideoTile(userId, username, { isLocal: true, isSelf: true });
   updateMicButtonUI();
   updateCamButtonUI();
 
   webrtcManager = createWebRTCManager({
-    roomId: ROOM_ID,
     userId,
     localStream,
     onRemoteStream: (peerId, stream) => {
@@ -288,78 +233,62 @@ async function joinRoom() {
   // habilitado por defecto a todo el mundo, no solo al moderador.
   webrtcManager.setTrackEnabled("audio", micOn);
   webrtcManager.setTrackEnabled("video", camOn);
+
+  for (const peerId of knownMembers.keys()) {
+    if (peerId !== userId) webrtcManager.handlePeerJoined(peerId);
+  }
+  renderMemberList();
+
   autoAcquireIfAlreadyGranted();
 
-  const presenceCol = collection(db, "rooms", ROOM_ID, "presence");
-  unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
-    for (const change of snapshot.docChanges()) {
-      const peerId = change.doc.id;
-      const data = change.doc.data();
-      if (change.type === "added" || change.type === "modified") {
-        const lastSeen = toMillis(data.lastSeen);
-        const isFresh = Date.now() - lastSeen < STALE_MS;
-        knownMembers.set(peerId, { name: data.name, lastSeen, hidden: !!data.hidden });
-        if (change.type === "added" && isFresh) {
-          webrtcManager.handlePeerJoined(peerId);
-          if (hasSeenInitialPresence && peerId !== userId && !data.hidden) {
-            notify("Nexus", `${data.name} entró a la sala`, "nexus-presence");
-          }
-        }
-      } else if (change.type === "removed") {
-        knownMembers.delete(peerId);
-        webrtcManager.handlePeerLeft(peerId);
-        removeVideoTile(peerId);
-      }
-    }
-    hasSeenInitialPresence = true;
+  for (const entry of welcome.messages) renderMessage(entry);
+
+  addRoomListener("presence-joined", (msg) => {
+    knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden });
+    webrtcManager.handlePeerJoined(msg.userId);
+    renderMemberList();
+    if (!msg.hidden) notify("Nexus", `${msg.name} entró a la sala`, "nexus-presence");
+  });
+
+  addRoomListener("presence-left", (msg) => {
+    knownMembers.delete(msg.userId);
+    webrtcManager.handlePeerLeft(msg.userId);
+    removeVideoTile(msg.userId);
     renderMemberList();
   });
 
-  sweepTimer = setInterval(sweepStaleMembers, SWEEP_INTERVAL_MS);
-
-  const messagesCol = collection(db, "rooms", ROOM_ID, "messages");
-  const messagesQuery = query(messagesCol, orderBy("createdAt", "asc"), limit(200));
-  unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
-    for (const change of snapshot.docChanges()) {
-      if (change.type === "added") {
-        const data = change.doc.data();
-        renderMessage(data);
-        if (hasSeenInitialMessages && data.userId !== userId) {
-          notify(data.name, data.text, "nexus-chat");
-        }
-      }
-    }
-    hasSeenInitialMessages = true;
+  addRoomListener("chat", (msg) => {
+    renderMessage(msg);
+    if (msg.userId !== userId) notify(msg.name, msg.text, "nexus-chat");
   });
 
-  window.addEventListener("beforeunload", leaveRoom);
-  window.addEventListener("pagehide", leaveRoom);
-}
+  addRoomListener("kicked", () => {
+    alert("Fuiste expulsado de la sala por un moderador.");
+    cleanupAndReturnToJoinScreen();
+  });
 
-async function leaveRoom() {
-  try {
-    await deleteDoc(doc(db, "rooms", ROOM_ID, "presence", userId));
-  } catch (err) {
-    // best effort
-  }
+  addRoomListener("disconnected", () => {
+    if (!els.roomScreen.classList.contains("hidden")) {
+      alert("Se perdió la conexión con el servidor.");
+      cleanupAndReturnToJoinScreen();
+    }
+  });
+
+  window.addEventListener("beforeunload", disconnect);
+  window.addEventListener("pagehide", disconnect);
 }
 
 function cleanupAndReturnToJoinScreen() {
-  clearInterval(heartbeatTimer);
-  clearInterval(sweepTimer);
-  if (unsubscribePresence) unsubscribePresence();
-  if (unsubscribeMessages) unsubscribeMessages();
-  if (unsubscribeKicked) unsubscribeKicked();
+  for (const unsubscribe of roomListeners) unsubscribe();
+  roomListeners.length = 0;
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
+  disconnect();
   els.videoGrid.innerHTML = "";
   els.chatMessages.innerHTML = "";
   knownMembers.clear();
-  hasSeenInitialPresence = false;
-  hasSeenInitialMessages = false;
   micOn = false;
   camOn = false;
-  leaveRoom();
   els.roomScreen.classList.add("hidden");
   els.joinScreen.classList.remove("hidden");
 }
@@ -383,12 +312,7 @@ els.chatForm.addEventListener("submit", async (e) => {
   const text = els.chatInput.value.trim();
   if (!text) return;
   els.chatInput.value = "";
-  await addDoc(collection(db, "rooms", ROOM_ID, "messages"), {
-    name: username,
-    userId,
-    text: text.slice(0, 500),
-    createdAt: serverTimestamp(),
-  });
+  sendChat(text.slice(0, 500));
 });
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
