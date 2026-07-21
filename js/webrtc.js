@@ -1,4 +1,4 @@
-import { sendSignal, on as onRealtime } from "./realtime.js?v=3";
+import { sendSignal, on as onRealtime } from "./realtime.js?v=4";
 
 // Servidor TURN propio (coturn) corriendo en tu PC.
 const ICE_SERVERS = {
