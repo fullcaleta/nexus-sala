@@ -195,16 +195,19 @@ function addRoomListener(type, fn) {
 }
 
 async function joinRoom() {
-  els.joinError.textContent = "";
+  els.joinError.textContent = "Conectando...";
   let welcome;
   try {
-    welcome = await connect(userId, username, modKeyFromUrl);
+    welcome = await connect(userId, username, modKeyFromUrl, (attempt, total) => {
+      els.joinError.textContent = `Conectando... (intento ${attempt} de ${total})`;
+    });
   } catch (err) {
-    els.roomScreen.classList.add("hidden");
-    els.joinScreen.classList.remove("hidden");
     els.joinError.textContent = "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
     return;
   }
+  els.joinError.textContent = "";
+  els.joinScreen.classList.add("hidden");
+  els.roomScreen.classList.remove("hidden");
 
   isModerator = !!welcome.isModerator;
   for (const member of welcome.members) {
@@ -302,8 +305,6 @@ els.joinForm.addEventListener("submit", async (e) => {
   }
   els.joinError.textContent = "";
   username = value.slice(0, 24);
-  els.joinScreen.classList.add("hidden");
-  els.roomScreen.classList.remove("hidden");
   await joinRoom();
 });
 
