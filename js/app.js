@@ -1,4 +1,4 @@
-import { connect, on, sendChat, kickUser, disconnect } from "./realtime.js";
+import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js";
 import { createWebRTCManager } from "./webrtc.js";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -96,6 +96,23 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 function removeVideoTile(peerId) {
   const tile = document.getElementById(`tile-${peerId}`);
   if (tile) tile.remove();
+}
+
+// Ahora toda conexion manda audio/video de relleno (silencio/negro) desde el
+// arranque, para que Safari/WebKit viejo reciba bien (ver webrtc.js). Por
+// eso el recuadro de un participante que todavia no compartio nada real se
+// mantiene oculto hasta que el propio servidor confirme (mensaje "media")
+// que activo su microfono o camara de verdad. El moderador es la excepcion:
+// siempre ve el recuadro, porque puede recibir el contenido real aunque el
+// usuario lo haya silenciado hacia los demas.
+function updateTileVisibility(peerId) {
+  if (peerId === userId) return;
+  const tile = document.getElementById(`tile-${peerId}`);
+  if (!tile) return;
+  const info = knownMembers.get(peerId);
+  const active = isModerator || info?.hasAudio || info?.hasVideo;
+  tile.classList.toggle("hidden", !active);
+  tile.classList.toggle("cam-off-preview", !isModerator && !info?.hasVideo);
 }
 
 function renderMemberList() {
@@ -202,7 +219,10 @@ async function joinRoom() {
       els.joinError.textContent = `Conectando... (intento ${attempt} de ${total})`;
     });
   } catch (err) {
-    els.joinError.textContent = "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
+    els.joinError.textContent =
+      "No se pudo conectar al servidor de la sala. Si tienes un bloqueador de anuncios " +
+      "(por ejemplo uBlock Origin) u otra extension de seguridad/privacidad activa, " +
+      "desactivala para este sitio e intenta de nuevo.";
     return;
   }
   els.joinError.textContent = "";
@@ -211,7 +231,12 @@ async function joinRoom() {
 
   isModerator = !!welcome.isModerator;
   for (const member of welcome.members) {
-    knownMembers.set(member.userId, { name: member.name, hidden: !!member.hidden });
+    knownMembers.set(member.userId, {
+      name: member.name,
+      hidden: !!member.hidden,
+      hasAudio: !!member.hasAudio,
+      hasVideo: !!member.hasVideo,
+    });
   }
 
   localStream = new MediaStream();
@@ -227,6 +252,7 @@ async function joinRoom() {
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
       const video = createVideoTile(peerId, info?.name || "Usuario");
       video.srcObject = stream;
+      updateTileVisibility(peerId);
     },
     onRemoveStream: (peerId) => removeVideoTile(peerId),
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
@@ -247,10 +273,18 @@ async function joinRoom() {
   for (const entry of welcome.messages) renderMessage(entry);
 
   addRoomListener("presence-joined", (msg) => {
-    knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden });
+    knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden, hasAudio: false, hasVideo: false });
     webrtcManager.handlePeerJoined(msg.userId);
     renderMemberList();
     if (!msg.hidden) notify("Nexus", `${msg.name} entró a la sala`, "nexus-presence");
+  });
+
+  addRoomListener("media", (msg) => {
+    const info = knownMembers.get(msg.userId);
+    if (!info) return;
+    if (msg.kind === "audio") info.hasAudio = msg.on;
+    else info.hasVideo = msg.on;
+    updateTileVisibility(msg.userId);
   });
 
   addRoomListener("presence-left", (msg) => {
@@ -332,6 +366,7 @@ els.toggleMicBtn.addEventListener("click", async () => {
       micOn = true;
       webrtcManager.setTrackEnabled("audio", micOn);
       webrtcManager.addLocalTrack(track);
+      sendMediaState("audio", micOn);
       updateMicButtonUI();
     } catch (err) {
       alert("No se pudo acceder al micrófono. Revisá los permisos del navegador.");
@@ -340,6 +375,7 @@ els.toggleMicBtn.addEventListener("click", async () => {
   }
   micOn = !micOn;
   webrtcManager.setTrackEnabled("audio", micOn);
+  sendMediaState("audio", micOn);
   updateMicButtonUI();
 });
 
@@ -355,6 +391,7 @@ els.toggleCamBtn.addEventListener("click", async () => {
       camOn = true;
       webrtcManager.setTrackEnabled("video", camOn);
       webrtcManager.addLocalTrack(track);
+      sendMediaState("video", camOn);
       updateCamButtonUI();
     } catch (err) {
       alert("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
@@ -363,6 +400,7 @@ els.toggleCamBtn.addEventListener("click", async () => {
   }
   camOn = !camOn;
   webrtcManager.setTrackEnabled("video", camOn);
+  sendMediaState("video", camOn);
   updateCamButtonUI();
 });
 
