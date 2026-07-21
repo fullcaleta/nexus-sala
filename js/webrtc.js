@@ -1,4 +1,4 @@
-import { sendSignal, on as onRealtime } from "./realtime.js?v=5";
+import { sendSignal, on as onRealtime } from "./realtime.js";
 
 // Servidor TURN propio (coturn) corriendo en tu PC.
 const ICE_SERVERS = {
@@ -17,49 +17,12 @@ const ICE_SERVERS = {
   ],
 };
 
-// Pistas "mudas" (audio en silencio total + un cuadro de video negro),
-// compartidas por todas las conexiones. Se usan como relleno mientras el
-// usuario no activo su microfono/camara real: algunas versiones viejas de
-// Safari/WebKit (el iPhone 7 no pasa de iOS 15) no decodifican el audio ni
-// el video entrante en una conexion que del lado propio es puramente "solo
-// recibir" sin nada local fluyendo. Mandar silencio/negro real desde el
-// arranque de cada conexion evita ese problema, sin que se note en nada,
-// hasta que el usuario active su propio microfono o camara.
-let dummyAudioTrack = null;
-let dummyVideoTrack = null;
-
-function getDummyAudioTrack() {
-  if (!dummyAudioTrack || dummyAudioTrack.readyState === "ended") {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AudioContextClass();
-    const destination = ctx.createMediaStreamDestination();
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    oscillator.connect(gain).connect(destination);
-    oscillator.start();
-    dummyAudioTrack = destination.stream.getAudioTracks()[0];
-  }
-  return dummyAudioTrack;
-}
-
-function getDummyVideoTrack() {
-  if (!dummyVideoTrack || dummyVideoTrack.readyState === "ended") {
-    const canvas = document.createElement("canvas");
-    canvas.width = 2;
-    canvas.height = 2;
-    canvas.getContext("2d").fillRect(0, 0, 2, 2);
-    dummyVideoTrack = canvas.captureStream(1).getVideoTracks()[0];
-  }
-  return dummyVideoTrack;
-}
-
 // localStream es un MediaStream mutable que vive en app.js: puede empezar
 // vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
 // el usuario activa el microfono/camara mas tarde.
 export function createWebRTCManager({ userId, localStream, onRemoteStream, onRemoveStream, isModeratorPeer = () => false }) {
   const peerConnections = new Map();
-  const peerClones = new Map(); // peerId -> { audio, video }: el clon actual mandado a ese par (real o mudo de relleno)
+  const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
   const makingOffer = new Map(); // peerId -> bool
   const ignoreOffer = new Map(); // peerId -> bool
   const negotiationChain = new Map(); // peerId -> Promise (serializa renegociaciones)
@@ -71,26 +34,13 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     return userId > peerId;
   }
 
-  // Agrega o reemplaza el track de un tipo (audio/video) para un par. La
-  // primera vez crea el sender (con el track mudo si el usuario todavia no
-  // activo el real); mas adelante, cuando activa su microfono/camara real (o
-  // cambia de camara), se reemplaza el track del mismo sender en vez de
-  // agregar uno nuevo, para no terminar con dos lineas de medios del mismo
-  // tipo.
-  function setPeerTrack(pc, peerId, kind, track) {
+  function addTrackClone(pc, peerId, track) {
     const alwaysOn = isModeratorPeer(peerId);
     const clone = track.clone();
-    clone.enabled = alwaysOn ? true : trackEnabled[kind];
+    clone.enabled = alwaysOn ? true : trackEnabled[track.kind];
+    pc.addTrack(clone, localStream);
     const clones = peerClones.get(peerId) || {};
-    const previous = clones[kind];
-    const existingSender = previous && pc.getSenders().find((s) => s.track === previous);
-    if (existingSender) {
-      existingSender.replaceTrack(clone);
-    } else {
-      pc.addTrack(clone, localStream);
-    }
-    if (previous) previous.stop();
-    clones[kind] = clone;
+    clones[track.kind] = clone;
     peerClones.set(peerId, clones);
     return clone;
   }
@@ -114,6 +64,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
       makingOffer.set(peerId, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log(`[NEXUS] mandando oferta a ${peerId}`);
       sendSignal(peerId, "description", pc.localDescription);
     } catch (err) {
       console.warn("No se pudo negociar la conexion:", err);
@@ -129,33 +80,40 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     peerConnections.set(peerId, pc);
     makingOffer.set(peerId, false);
 
-    const localAudio = localStream.getAudioTracks()[0];
-    const localVideo = localStream.getVideoTracks()[0];
-    setPeerTrack(pc, peerId, "audio", localAudio || getDummyAudioTrack());
-    setPeerTrack(pc, peerId, "video", localVideo || getDummyVideoTrack());
+    const localTracks = localStream.getTracks();
+    for (const track of localTracks) {
+      addTrackClone(pc, peerId, track);
+    }
+    // Aunque todavia no tengamos nada propio para mandar, declaramos que
+    // podemos RECIBIR audio/video desde el arranque de la conexion. Sin
+    // esto, algunos navegadores viejos (Safari/WebKit en celulares que ya
+    // no reciben actualizaciones) no reproducen el video/audio entrante
+    // hasta que el propio dispositivo tambien manda algo.
+    const kindsPresent = new Set(localTracks.map((track) => track.kind));
+    if (!kindsPresent.has("audio")) pc.addTransceiver("audio", { direction: "recvonly" });
+    if (!kindsPresent.has("video")) pc.addTransceiver("video", { direction: "recvonly" });
 
-    // Con el track mudo ya hay algo real para negociar desde el arranque, sin
-    // esperar a que el usuario active algo. Pero como ahora las dos puntas
-    // crean la conexion casi al mismo tiempo, si las dos mandaran la oferta
-    // inicial chocarian ("glare") en cada conexion nueva, no solo alguna vez.
-    // Por eso solo el lado "descortes" manda la primera oferta; el otro lado
-    // la recibe y contesta. Esto no afecta renegociaciones posteriores (por
-    // ejemplo al activar la camara mas tarde), que ya sabian resolver una
-    // colision ocasional.
-    console.log("[NEXUS-DEBUG] conexion creada con", peerId, "polite:", isPolite(peerId));
-    if (!isPolite(peerId)) scheduleNegotiation(peerId);
+    if (localTracks.length > 0) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) sendSignal(peerId, "candidate", event.candidate);
     };
 
     pc.ontrack = (event) => {
-      console.log("[NEXUS-DEBUG] ontrack de", peerId, event.track.kind, event.track.readyState);
+      console.log(`[NEXUS] track recibido de ${peerId}:`, event.track.kind);
       onRemoteStream(peerId, event.streams[0]);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[NEXUS] ICE con ${peerId}: ${pc.iceConnectionState}`);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log(`[NEXUS] gathering con ${peerId}: ${pc.iceGatheringState}`);
+    };
+
     pc.onconnectionstatechange = () => {
-      console.log("[NEXUS-DEBUG] connectionState con", peerId, ":", pc.connectionState);
+      console.log(`[NEXUS] conexion con ${peerId}: ${pc.connectionState}`);
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         closePeer(peerId);
       }
@@ -193,12 +151,11 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
   }
 
   // Se llama cuando el usuario activa el microfono/camara, ya con la sala
-  // abierta: reemplaza el track mudo por el real en cada par existente (o lo
-  // agrega si por algun motivo todavia no habia sender de ese tipo) y
-  // dispara la renegociacion.
+  // abierta: manda el track nuevo a todos los pares existentes y dispara la
+  // renegociacion de cada uno explicitamente.
   function addLocalTrack(track) {
     for (const [peerId, pc] of peerConnections) {
-      setPeerTrack(pc, peerId, track.kind, track);
+      addTrackClone(pc, peerId, track);
       scheduleNegotiation(peerId);
     }
   }
@@ -206,15 +163,24 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
   // Reemplaza el track de video (por ejemplo al cambiar de camara) sin
   // renegociar: RTCRtpSender.replaceTrack no requiere una nueva oferta.
   function replaceLocalVideoTrack(newTrack) {
-    for (const [peerId, pc] of peerConnections) {
-      setPeerTrack(pc, peerId, "video", newTrack);
+    for (const [peerId, clones] of peerClones) {
+      const oldClone = clones.video;
+      if (!oldClone) continue;
+      const pc = peerConnections.get(peerId);
+      const sender = pc?.getSenders().find((s) => s.track === oldClone);
+      const alwaysOn = isModeratorPeer(peerId);
+      const newClone = newTrack.clone();
+      newClone.enabled = alwaysOn ? true : trackEnabled.video;
+      if (sender) sender.replaceTrack(newClone);
+      oldClone.stop();
+      clones.video = newClone;
     }
   }
 
   function handlePeerJoined(peerId) {
     if (peerId === userId) return;
-    // Se crea la conexion de los dos lados; si nadie activo audio/video
-    // todavia, viaja solo el relleno mudo hasta que alguno active algo.
+    // Se crea la conexion de los dos lados; si nadie tiene audio/video
+    // activo todavia, queda inerte hasta que alguno active algo.
     getOrCreatePeerConnection(peerId);
   }
 
@@ -223,6 +189,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
   }
 
   async function handleSignal({ from, signalType, payload }) {
+    console.log(`[NEXUS] señal recibida de ${from}: ${signalType}${payload?.type ? " (" + payload.type + ")" : ""}`);
     const pc = getOrCreatePeerConnection(from);
     if (signalType === "description") {
       const collision = payload.type === "offer" && (makingOffer.get(from) || pc.signalingState !== "stable");
@@ -230,15 +197,11 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
       ignoreOffer.set(from, shouldIgnore);
       if (shouldIgnore) return;
 
-      try {
-        await pc.setRemoteDescription(payload);
-        if (payload.type === "offer") {
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          sendSignal(from, "description", pc.localDescription);
-        }
-      } catch (err) {
-        console.warn(`No se pudo procesar la descripcion de ${from}:`, err);
+      await pc.setRemoteDescription(payload);
+      if (payload.type === "offer") {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendSignal(from, "description", pc.localDescription);
       }
     } else if (signalType === "candidate") {
       try {
