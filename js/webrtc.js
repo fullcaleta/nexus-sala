@@ -55,6 +55,7 @@ export function createWebRTCManager({
   const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
   const makingOffer = new Map(); // peerId -> bool
   const ignoreOffer = new Map(); // peerId -> bool
+  const negotiationChain = new Map(); // peerId -> Promise (serializa renegociaciones)
   const trackEnabled = { audio: true, video: true };
   const signalsCol = collection(db, "rooms", roomId, "signals");
 
@@ -85,6 +86,33 @@ export function createWebRTCManager({
     return clone;
   }
 
+  // Dispara una oferta nueva de forma explicita (no dependemos de que el
+  // navegador dispare "negotiationneeded" de forma confiable, sobre todo
+  // cuando se agregan varios tracks seguidos en navegadores de celular).
+  // Se encadena en una promesa por par para nunca superponer dos
+  // renegociaciones sobre la misma conexion.
+  function scheduleNegotiation(peerId) {
+    const previous = negotiationChain.get(peerId) || Promise.resolve();
+    const next = previous.then(() => negotiateWith(peerId)).catch(() => {});
+    negotiationChain.set(peerId, next);
+    return next;
+  }
+
+  async function negotiateWith(peerId) {
+    const pc = peerConnections.get(peerId);
+    if (!pc) return;
+    try {
+      makingOffer.set(peerId, true);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await sendSignal(peerId, "description", pc.localDescription);
+    } catch (err) {
+      console.warn("No se pudo negociar la conexion:", err);
+    } finally {
+      makingOffer.set(peerId, false);
+    }
+  }
+
   function getOrCreatePeerConnection(peerId) {
     if (peerConnections.has(peerId)) return peerConnections.get(peerId);
 
@@ -92,22 +120,11 @@ export function createWebRTCManager({
     peerConnections.set(peerId, pc);
     makingOffer.set(peerId, false);
 
+    const hadTracks = localStream.getTracks().length > 0;
     for (const track of localStream.getTracks()) {
       addTrackClone(pc, peerId, track);
     }
-
-    pc.onnegotiationneeded = async () => {
-      try {
-        makingOffer.set(peerId, true);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await sendSignal(peerId, "description", pc.localDescription);
-      } catch (err) {
-        console.warn("No se pudo negociar la conexion:", err);
-      } finally {
-        makingOffer.set(peerId, false);
-      }
-    };
+    if (hadTracks) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -141,6 +158,7 @@ export function createWebRTCManager({
     }
     makingOffer.delete(peerId);
     ignoreOffer.delete(peerId);
+    negotiationChain.delete(peerId);
     onRemoveStream(peerId);
   }
 
@@ -155,12 +173,13 @@ export function createWebRTCManager({
     }
   }
 
-  // Se llama cuando el usuario activa el microfono/camara por primera vez,
-  // ya con la sala abierta: manda el track nuevo a todos los pares existentes
-  // (dispara la renegociacion automaticamente via onnegotiationneeded).
+  // Se llama cuando el usuario activa el microfono/camara, ya con la sala
+  // abierta: manda el track nuevo a todos los pares existentes y dispara la
+  // renegociacion de cada uno explicitamente.
   function addLocalTrack(track) {
     for (const [peerId, pc] of peerConnections) {
       addTrackClone(pc, peerId, track);
+      scheduleNegotiation(peerId);
     }
   }
 
