@@ -1,41 +1,18 @@
-import {
-  db,
-  collection,
-  addDoc,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-} from "./db.js";
+import { sendSignal, on as onRealtime } from "./realtime.js";
 
-// Servidor TURN (retransmisor) propio en Metered.ca. Sin esto, usuarios detras
-// de redes restrictivas (datos moviles, ciertos wifi/NAT) nunca logran conectar
-// la camara/microfono con nadie, aunque el resto del grupo funcione bien.
+// Servidor TURN propio (coturn) corriendo en tu PC.
 const ICE_SERVERS = {
   iceServers: [
-    { urls: "stun:stun.relay.metered.ca:80" },
+    { urls: "stun:nexus-sala.duckdns.org:3478" },
     {
-      urls: "turn:global.relay.metered.ca:80",
-      username: "e92662dff99aa45aafcdc55d",
-      credential: "dvtU1DeF8Mg0hq7d",
+      urls: "turn:nexus-sala.duckdns.org:3478",
+      username: "nexususer",
+      credential: "AKgSTdMrTRG13VGy3fAr",
     },
     {
-      urls: "turn:global.relay.metered.ca:80?transport=tcp",
-      username: "e92662dff99aa45aafcdc55d",
-      credential: "dvtU1DeF8Mg0hq7d",
-    },
-    {
-      urls: "turn:global.relay.metered.ca:443",
-      username: "e92662dff99aa45aafcdc55d",
-      credential: "dvtU1DeF8Mg0hq7d",
-    },
-    {
-      urls: "turns:global.relay.metered.ca:443?transport=tcp",
-      username: "e92662dff99aa45aafcdc55d",
-      credential: "dvtU1DeF8Mg0hq7d",
+      urls: "turn:nexus-sala.duckdns.org:3478?transport=tcp",
+      username: "nexususer",
+      credential: "AKgSTdMrTRG13VGy3fAr",
     },
   ],
 };
@@ -43,36 +20,18 @@ const ICE_SERVERS = {
 // localStream es un MediaStream mutable que vive en app.js: puede empezar
 // vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
 // el usuario activa el microfono/camara mas tarde.
-export function createWebRTCManager({
-  roomId,
-  userId,
-  localStream,
-  onRemoteStream,
-  onRemoveStream,
-  isModeratorPeer = () => false,
-}) {
+export function createWebRTCManager({ userId, localStream, onRemoteStream, onRemoveStream, isModeratorPeer = () => false }) {
   const peerConnections = new Map();
   const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
   const makingOffer = new Map(); // peerId -> bool
   const ignoreOffer = new Map(); // peerId -> bool
   const negotiationChain = new Map(); // peerId -> Promise (serializa renegociaciones)
   const trackEnabled = { audio: true, video: true };
-  const signalsCol = collection(db, "rooms", roomId, "signals");
 
   // Regla simple y simetrica para decidir quien cede en caso de que ambos
   // lados intenten renegociar al mismo tiempo ("glare").
   function isPolite(peerId) {
     return userId > peerId;
-  }
-
-  async function sendSignal(to, type, payload) {
-    await addDoc(signalsCol, {
-      from: userId,
-      to,
-      type,
-      payload: JSON.stringify(payload),
-      createdAt: serverTimestamp(),
-    });
   }
 
   function addTrackClone(pc, peerId, track) {
@@ -105,7 +64,7 @@ export function createWebRTCManager({
       makingOffer.set(peerId, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await sendSignal(peerId, "description", pc.localDescription);
+      sendSignal(peerId, "description", pc.localDescription);
     } catch (err) {
       console.warn("No se pudo negociar la conexion:", err);
     } finally {
@@ -126,9 +85,9 @@ export function createWebRTCManager({
     }
     // Aunque todavia no tengamos nada propio para mandar, declaramos que
     // podemos RECIBIR audio/video desde el arranque de la conexion. Sin
-    // esto, algunos navegadores viejos (Safari/WebKit en iPhones que ya no
-    // reciben actualizaciones) no reproducen el video/audio entrante hasta
-    // que el propio dispositivo tambien manda algo.
+    // esto, algunos navegadores viejos (Safari/WebKit en celulares que ya
+    // no reciben actualizaciones) no reproducen el video/audio entrante
+    // hasta que el propio dispositivo tambien manda algo.
     const kindsPresent = new Set(localTracks.map((track) => track.kind));
     if (!kindsPresent.has("audio")) pc.addTransceiver("audio", { direction: "recvonly" });
     if (!kindsPresent.has("video")) pc.addTransceiver("video", { direction: "recvonly" });
@@ -136,9 +95,7 @@ export function createWebRTCManager({
     if (localTracks.length > 0) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendSignal(peerId, "candidate", event.candidate);
-      }
+      if (event.candidate) sendSignal(peerId, "candidate", event.candidate);
     };
 
     pc.ontrack = (event) => {
@@ -220,20 +177,9 @@ export function createWebRTCManager({
     closePeer(peerId);
   }
 
-  const signalsQuery = query(signalsCol, where("to", "==", userId));
-  const unsubscribeSignals = onSnapshot(signalsQuery, (snapshot) => {
-    for (const change of snapshot.docChanges()) {
-      if (change.type !== "added") continue;
-      const data = change.doc.data();
-      const payload = JSON.parse(data.payload);
-      handleSignal(data.from, data.type, payload);
-      deleteDoc(doc(db, "rooms", roomId, "signals", change.doc.id));
-    }
-  });
-
-  async function handleSignal(from, type, payload) {
+  async function handleSignal({ from, signalType, payload }) {
     const pc = getOrCreatePeerConnection(from);
-    if (type === "description") {
+    if (signalType === "description") {
       const collision = payload.type === "offer" && (makingOffer.get(from) || pc.signalingState !== "stable");
       const shouldIgnore = !isPolite(from) && collision;
       ignoreOffer.set(from, shouldIgnore);
@@ -243,9 +189,9 @@ export function createWebRTCManager({
       if (payload.type === "offer") {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        await sendSignal(from, "description", pc.localDescription);
+        sendSignal(from, "description", pc.localDescription);
       }
-    } else if (type === "candidate") {
+    } else if (signalType === "candidate") {
       try {
         await pc.addIceCandidate(payload);
       } catch (err) {
@@ -254,8 +200,10 @@ export function createWebRTCManager({
     }
   }
 
+  const unsubscribeSignal = onRealtime("signal", handleSignal);
+
   function destroy() {
-    unsubscribeSignals();
+    unsubscribeSignal();
     for (const peerId of [...peerConnections.keys()]) {
       closePeer(peerId);
     }

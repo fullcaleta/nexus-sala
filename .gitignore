@@ -1,1 +1,6 @@
 enlaces-privados.txt
+
+# El backend corre local en tu PC, no se publica en GitHub Pages, y
+# ademas contiene secretos (clave de TURN, token de DuckDNS) que no
+# deben quedar en un repositorio publico.
+server/
