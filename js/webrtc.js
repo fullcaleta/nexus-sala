@@ -120,11 +120,20 @@ export function createWebRTCManager({
     peerConnections.set(peerId, pc);
     makingOffer.set(peerId, false);
 
-    const hadTracks = localStream.getTracks().length > 0;
-    for (const track of localStream.getTracks()) {
+    const localTracks = localStream.getTracks();
+    for (const track of localTracks) {
       addTrackClone(pc, peerId, track);
     }
-    if (hadTracks) scheduleNegotiation(peerId);
+    // Aunque todavia no tengamos nada propio para mandar, declaramos que
+    // podemos RECIBIR audio/video desde el arranque de la conexion. Sin
+    // esto, algunos navegadores viejos (Safari/WebKit en iPhones que ya no
+    // reciben actualizaciones) no reproducen el video/audio entrante hasta
+    // que el propio dispositivo tambien manda algo.
+    const kindsPresent = new Set(localTracks.map((track) => track.kind));
+    if (!kindsPresent.has("audio")) pc.addTransceiver("audio", { direction: "recvonly" });
+    if (!kindsPresent.has("video")) pc.addTransceiver("video", { direction: "recvonly" });
+
+    if (localTracks.length > 0) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
