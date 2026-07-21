@@ -64,6 +64,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
       makingOffer.set(peerId, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log(`[NEXUS] mandando oferta a ${peerId}`);
       sendSignal(peerId, "description", pc.localDescription);
     } catch (err) {
       console.warn("No se pudo negociar la conexion:", err);
@@ -99,10 +100,20 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     };
 
     pc.ontrack = (event) => {
+      console.log(`[NEXUS] track recibido de ${peerId}:`, event.track.kind);
       onRemoteStream(peerId, event.streams[0]);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[NEXUS] ICE con ${peerId}: ${pc.iceConnectionState}`);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log(`[NEXUS] gathering con ${peerId}: ${pc.iceGatheringState}`);
+    };
+
     pc.onconnectionstatechange = () => {
+      console.log(`[NEXUS] conexion con ${peerId}: ${pc.connectionState}`);
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         closePeer(peerId);
       }
@@ -178,6 +189,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
   }
 
   async function handleSignal({ from, signalType, payload }) {
+    console.log(`[NEXUS] señal recibida de ${from}: ${signalType}${payload?.type ? " (" + payload.type + ")" : ""}`);
     const pc = getOrCreatePeerConnection(from);
     if (signalType === "description") {
       const collision = payload.type === "offer" && (makingOffer.get(from) || pc.signalingState !== "stable");
