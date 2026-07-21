@@ -119,10 +119,6 @@ export function sendSignal(to, signalType, payload) {
   sendMessage({ type: "signal", to, signalType, payload });
 }
 
-export function sendMediaState(kind, on) {
-  sendMessage({ type: "media", kind, on });
-}
-
 export function kickUser(targetId) {
   sendMessage({ type: "kick", targetId });
 }
