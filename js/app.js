@@ -378,20 +378,45 @@ els.switchCamBtn.addEventListener("click", async () => {
   const oldTrack = localStream.getVideoTracks()[0];
   if (!oldTrack) return;
   const newFacing = facingMode === "user" ? "environment" : "user";
+  let newStream;
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: newFacing } });
-    const newTrack = newStream.getVideoTracks()[0];
-    localStream.removeTrack(oldTrack);
-    oldTrack.stop();
-    localStream.addTrack(newTrack);
-    const localVideoEl = document.querySelector(`#tile-${userId} video`);
-    if (localVideoEl) localVideoEl.srcObject = localStream;
-    webrtcManager.replaceLocalVideoTrack(newTrack);
-    facingMode = newFacing;
-    document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
+    // Pedir la camara "por identificador" (probar con cualquier otra que no
+    // sea la actual) es mucho mas confiable entre celulares distintos que
+    // pedir por facingMode: no todos los navegadores interpretan igual
+    // "dame la trasera/frontal", pero casi todos listan bien las camaras
+    // disponibles por su id.
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((d) => d.kind === "videoinput");
+    const currentId = oldTrack.getSettings().deviceId;
+    const otherCamera = cameras.find((d) => d.deviceId && d.deviceId !== currentId);
+    if (otherCamera) {
+      newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: otherCamera.deviceId } } });
+    }
   } catch (err) {
-    alert("No se pudo cambiar de cámara en este dispositivo.");
+    // seguir al siguiente intento
   }
+  if (!newStream) {
+    try {
+      // Plan B: pedirla como preferencia (no exigencia) por facingMode.
+      newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: newFacing } } });
+    } catch (err2) {
+      console.error("[NEXUS-DEBUG] error al cambiar de camara:", err2.name, err2.message);
+      alert("No se pudo cambiar de cámara en este dispositivo.");
+      return;
+    }
+  }
+  const newTrack = newStream.getVideoTracks()[0];
+  localStream.removeTrack(oldTrack);
+  oldTrack.stop();
+  localStream.addTrack(newTrack);
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  webrtcManager.replaceLocalVideoTrack(newTrack);
+  // El navegador suele informar la orientacion real de la camara elegida;
+  // si no la informa, se asume que se alterno a la otra (mejor esfuerzo).
+  const reportedFacing = newTrack.getSettings().facingMode;
+  facingMode = reportedFacing || newFacing;
+  document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
 });
 
 els.notifyBtn.addEventListener("click", async () => {
