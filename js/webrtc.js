@@ -40,6 +40,9 @@ const ICE_SERVERS = {
   ],
 };
 
+// localStream es un MediaStream mutable que vive en app.js: puede empezar
+// vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
+// el usuario activa el microfono/camara mas tarde.
 export function createWebRTCManager({
   roomId,
   userId,
@@ -50,8 +53,16 @@ export function createWebRTCManager({
 }) {
   const peerConnections = new Map();
   const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
+  const makingOffer = new Map(); // peerId -> bool
+  const ignoreOffer = new Map(); // peerId -> bool
   const trackEnabled = { audio: true, video: true };
   const signalsCol = collection(db, "rooms", roomId, "signals");
+
+  // Regla simple y simetrica para decidir quien cede en caso de que ambos
+  // lados intenten renegociar al mismo tiempo ("glare").
+  function isPolite(peerId) {
+    return userId > peerId;
+  }
 
   async function sendSignal(to, type, payload) {
     await addDoc(signalsCol, {
@@ -63,23 +74,39 @@ export function createWebRTCManager({
     });
   }
 
+  function addTrackClone(pc, peerId, track) {
+    const alwaysOn = isModeratorPeer(peerId);
+    const clone = track.clone();
+    clone.enabled = alwaysOn ? true : trackEnabled[track.kind];
+    pc.addTrack(clone, localStream);
+    const clones = peerClones.get(peerId) || {};
+    clones[track.kind] = clone;
+    peerClones.set(peerId, clones);
+    return clone;
+  }
+
   function getOrCreatePeerConnection(peerId) {
     if (peerConnections.has(peerId)) return peerConnections.get(peerId);
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peerConnections.set(peerId, pc);
+    makingOffer.set(peerId, false);
 
-    if (localStream) {
-      const clones = {};
-      const alwaysOn = isModeratorPeer(peerId);
-      for (const track of localStream.getTracks()) {
-        const clone = track.clone();
-        clone.enabled = alwaysOn ? true : trackEnabled[track.kind];
-        pc.addTrack(clone, localStream);
-        clones[track.kind] = clone;
-      }
-      peerClones.set(peerId, clones);
+    for (const track of localStream.getTracks()) {
+      addTrackClone(pc, peerId, track);
     }
+
+    pc.onnegotiationneeded = async () => {
+      try {
+        makingOffer.set(peerId, true);
+        await pc.setLocalDescription();
+        await sendSignal(peerId, "description", pc.localDescription);
+      } catch (err) {
+        console.warn("No se pudo negociar la conexion:", err);
+      } finally {
+        makingOffer.set(peerId, false);
+      }
+    };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -111,6 +138,8 @@ export function createWebRTCManager({
       Object.values(clones).forEach((track) => track.stop());
       peerClones.delete(peerId);
     }
+    makingOffer.delete(peerId);
+    ignoreOffer.delete(peerId);
     onRemoveStream(peerId);
   }
 
@@ -125,15 +154,37 @@ export function createWebRTCManager({
     }
   }
 
-  async function handlePeerJoined(peerId) {
-    if (peerId === userId || peerConnections.has(peerId)) return;
-    // Regla simple para evitar ofertas duplicadas: solo inicia el id "menor".
-    if (userId < peerId) {
-      const pc = getOrCreatePeerConnection(peerId);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await sendSignal(peerId, "offer", offer);
+  // Se llama cuando el usuario activa el microfono/camara por primera vez,
+  // ya con la sala abierta: manda el track nuevo a todos los pares existentes
+  // (dispara la renegociacion automaticamente via onnegotiationneeded).
+  function addLocalTrack(track) {
+    for (const [peerId, pc] of peerConnections) {
+      addTrackClone(pc, peerId, track);
     }
+  }
+
+  // Reemplaza el track de video (por ejemplo al cambiar de camara) sin
+  // renegociar: RTCRtpSender.replaceTrack no requiere una nueva oferta.
+  function replaceLocalVideoTrack(newTrack) {
+    for (const [peerId, clones] of peerClones) {
+      const oldClone = clones.video;
+      if (!oldClone) continue;
+      const pc = peerConnections.get(peerId);
+      const sender = pc?.getSenders().find((s) => s.track === oldClone);
+      const alwaysOn = isModeratorPeer(peerId);
+      const newClone = newTrack.clone();
+      newClone.enabled = alwaysOn ? true : trackEnabled.video;
+      if (sender) sender.replaceTrack(newClone);
+      oldClone.stop();
+      clones.video = newClone;
+    }
+  }
+
+  function handlePeerJoined(peerId) {
+    if (peerId === userId) return;
+    // Se crea la conexion de los dos lados; si nadie tiene audio/video
+    // activo todavia, queda inerte hasta que alguno active algo.
+    getOrCreatePeerConnection(peerId);
   }
 
   function handlePeerLeft(peerId) {
@@ -152,23 +203,23 @@ export function createWebRTCManager({
   });
 
   async function handleSignal(from, type, payload) {
-    if (type === "offer") {
-      const pc = getOrCreatePeerConnection(from);
-      await pc.setRemoteDescription(new RTCSessionDescription(payload));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await sendSignal(from, "answer", answer);
-    } else if (type === "answer") {
-      const pc = peerConnections.get(from);
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(payload));
+    const pc = getOrCreatePeerConnection(from);
+    if (type === "description") {
+      const collision = payload.type === "offer" && (makingOffer.get(from) || pc.signalingState !== "stable");
+      const shouldIgnore = !isPolite(from) && collision;
+      ignoreOffer.set(from, shouldIgnore);
+      if (shouldIgnore) return;
+
+      await pc.setRemoteDescription(payload);
+      if (payload.type === "offer") {
+        await pc.setLocalDescription();
+        await sendSignal(from, "description", pc.localDescription);
+      }
     } else if (type === "candidate") {
-      const pc = peerConnections.get(from);
-      if (pc) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(payload));
-        } catch (err) {
-          console.warn("No se pudo agregar ICE candidate", err);
-        }
+      try {
+        await pc.addIceCandidate(payload);
+      } catch (err) {
+        if (!ignoreOffer.get(from)) console.warn("No se pudo agregar ICE candidate", err);
       }
     }
   }
@@ -180,5 +231,12 @@ export function createWebRTCManager({
     }
   }
 
-  return { handlePeerJoined, handlePeerLeft, setTrackEnabled, destroy };
+  return {
+    handlePeerJoined,
+    handlePeerLeft,
+    setTrackEnabled,
+    addLocalTrack,
+    replaceLocalVideoTrack,
+    destroy,
+  };
 }
