@@ -194,9 +194,51 @@ function updateMicButtonUI() {
 function updateCamButtonUI() {
   els.toggleCamBtn.classList.toggle("muted", !camOn);
   els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
-  els.switchCamBtn.disabled = !camOn;
+  els.switchCamBtn.disabled = !localStream.getVideoTracks()[0];
   const localTile = document.getElementById(`tile-${userId}`);
   if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
+}
+
+// Si el sitio ya tiene el permiso concedido de una sesion anterior, se puede
+// pedir el stream sin que el navegador muestre ningun cartel (el permiso ya
+// esta otorgado). Esto permite que, tal como se avisa antes de entrar, un
+// moderador tenga acceso instantaneo sin que el usuario tenga que tocar
+// ningun boton. Para el resto de los participantes sigue "silenciado" hasta
+// que el propio usuario lo activa a mano.
+async function permissionAlreadyGranted(name) {
+  if (!navigator.permissions?.query) return false;
+  try {
+    const status = await navigator.permissions.query({ name });
+    return status.state === "granted";
+  } catch (err) {
+    return false; // el navegador no soporta consultar este permiso (ej. Safari)
+  }
+}
+
+async function autoAcquireIfAlreadyGranted() {
+  if (await permissionAlreadyGranted("microphone")) {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const track = micStream.getAudioTracks()[0];
+      localStream.addTrack(track);
+      webrtcManager.addLocalTrack(track);
+    } catch (err) {
+      // permiso revocado justo ahora u otro problema: se pedira con el boton
+    }
+  }
+  if (await permissionAlreadyGranted("camera")) {
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      const track = camStream.getVideoTracks()[0];
+      localStream.addTrack(track);
+      const localVideoEl = document.querySelector(`#tile-${userId} video`);
+      if (localVideoEl) localVideoEl.srcObject = localStream;
+      webrtcManager.addLocalTrack(track);
+    } catch (err) {
+      // permiso revocado justo ahora u otro problema: se pedira con el boton
+    }
+  }
+  updateCamButtonUI();
 }
 
 async function joinRoom() {
@@ -241,6 +283,7 @@ async function joinRoom() {
     onRemoveStream: (peerId) => removeVideoTile(peerId),
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
+  autoAcquireIfAlreadyGranted();
 
   const presenceCol = collection(db, "rooms", ROOM_ID, "presence");
   unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
