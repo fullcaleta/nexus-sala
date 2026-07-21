@@ -317,10 +317,11 @@ body {
   background: #0d0c16;
 }
 
-/* Efecto espejo solo para tu propia vista previa con camara frontal (como
-   te ves al mirarte a un espejo). Los demas participantes ven tu video sin
-   espejar, tal cual lo capta la camara, para que la orientacion real (por
-   ejemplo, que objeto queda a tu derecha) se entienda bien desde afuera. */
+/* Efecto espejo solo para tu propia vista previa (como te ves al mirarte a
+   un espejo, con cualquiera de las dos camaras). Los demas participantes
+   ven tu video sin espejar, tal cual lo capta la camara, para que la
+   orientacion real (por ejemplo, que objeto queda a tu derecha) se entienda
+   bien desde afuera. */
 .video-tile.local-tile.mirrored video {
   transform: scaleX(-1);
 }
