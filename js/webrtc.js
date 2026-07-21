@@ -99,7 +99,8 @@ export function createWebRTCManager({
     pc.onnegotiationneeded = async () => {
       try {
         makingOffer.set(peerId, true);
-        await pc.setLocalDescription();
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
         await sendSignal(peerId, "description", pc.localDescription);
       } catch (err) {
         console.warn("No se pudo negociar la conexion:", err);
@@ -212,7 +213,8 @@ export function createWebRTCManager({
 
       await pc.setRemoteDescription(payload);
       if (payload.type === "offer") {
-        await pc.setLocalDescription();
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
         await sendSignal(from, "description", pc.localDescription);
       }
     } else if (type === "candidate") {
