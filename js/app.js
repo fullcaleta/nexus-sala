@@ -1,5 +1,5 @@
-import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js?v=3";
-import { createWebRTCManager } from "./webrtc.js?v=3";
+import { connect, on, sendChat, kickUser, disconnect, sendMediaState } from "./realtime.js?v=4";
+import { createWebRTCManager } from "./webrtc.js?v=4";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -422,6 +422,7 @@ els.switchCamBtn.addEventListener("click", async () => {
     webrtcManager.replaceLocalVideoTrack(newTrack);
     facingMode = newFacing;
   } catch (err) {
+    console.error("[NEXUS-DEBUG] error al cambiar de camara:", err.name, err.message);
     alert("No se pudo cambiar de cámara en este dispositivo.");
   }
 });
