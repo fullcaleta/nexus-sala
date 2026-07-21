@@ -77,12 +77,13 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   const tile = document.createElement("div");
   tile.className = "video-tile";
   tile.id = `tile-${peerId}`;
-  // El efecto espejo solo se aplica a la propia vista previa, nunca a lo que
-  // ven los demas. Se espeja con cualquiera de las dos camaras: en algunos
-  // celulares (ej. iPhone 7) la camara trasera tambien sale invertida en la
-  // vista previa si no se espeja, y desorienta al apuntar.
+  // El efecto espejo (como mirarte a un espejo) solo tiene sentido con la
+  // camara frontal, y solo en tu propia vista previa; con la camara trasera
+  // (por ejemplo apuntando a un monitor con texto) no hay que espejar nada,
+  // ni para vos ni para los demas, o el texto se lee al reves.
   if (isLocal) {
-    tile.classList.add("local-tile", "mirrored");
+    tile.classList.add("local-tile");
+    tile.classList.toggle("mirrored", facingMode === "user");
   }
 
   const video = document.createElement("video");
@@ -387,6 +388,7 @@ els.switchCamBtn.addEventListener("click", async () => {
     if (localVideoEl) localVideoEl.srcObject = localStream;
     webrtcManager.replaceLocalVideoTrack(newTrack);
     facingMode = newFacing;
+    document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
   } catch (err) {
     alert("No se pudo cambiar de cámara en este dispositivo.");
   }
