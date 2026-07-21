@@ -1,5 +1,10 @@
 enlaces-privados.txt
 
+# Describe en detalle la arquitectura y las vulnerabilidades conocidas del
+# backend: util para retomar el proyecto en el futuro, pero no para publicar
+# en un repositorio abierto.
+ESTADO-DEL-PROYECTO.md
+
 # El backend corre local en tu PC, no se publica en GitHub Pages, y
 # ademas contiene secretos (clave de TURN, token de DuckDNS) que no
 # deben quedar en un repositorio publico.
