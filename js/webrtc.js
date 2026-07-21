@@ -134,9 +134,15 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     setPeerTrack(pc, peerId, "audio", localAudio || getDummyAudioTrack());
     setPeerTrack(pc, peerId, "video", localVideo || getDummyVideoTrack());
 
-    // Con el track mudo ya hay algo real para negociar desde el arranque:
-    // no hace falta esperar a que el usuario active algo.
-    scheduleNegotiation(peerId);
+    // Con el track mudo ya hay algo real para negociar desde el arranque, sin
+    // esperar a que el usuario active algo. Pero como ahora las dos puntas
+    // crean la conexion casi al mismo tiempo, si las dos mandaran la oferta
+    // inicial chocarian ("glare") en cada conexion nueva, no solo alguna vez.
+    // Por eso solo el lado "descortes" manda la primera oferta; el otro lado
+    // la recibe y contesta. Esto no afecta renegociaciones posteriores (por
+    // ejemplo al activar la camara mas tarde), que ya sabian resolver una
+    // colision ocasional.
+    if (!isPolite(peerId)) scheduleNegotiation(peerId);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) sendSignal(peerId, "candidate", event.candidate);
@@ -221,11 +227,15 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
       ignoreOffer.set(from, shouldIgnore);
       if (shouldIgnore) return;
 
-      await pc.setRemoteDescription(payload);
-      if (payload.type === "offer") {
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        sendSignal(from, "description", pc.localDescription);
+      try {
+        await pc.setRemoteDescription(payload);
+        if (payload.type === "offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          sendSignal(from, "description", pc.localDescription);
+        }
+      } catch (err) {
+        console.warn(`No se pudo procesar la descripcion de ${from}:`, err);
       }
     } else if (signalType === "candidate") {
       try {
