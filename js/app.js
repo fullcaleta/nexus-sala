@@ -130,6 +130,7 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     volumeControl.title = "Volumen de esta persona";
     volumeControl.addEventListener("input", () => {
       video.volume = Number(volumeControl.value);
+      console.log("[NEXUS-DEBUG] volumen", peerId, "->", video.volume, "muted:", video.muted, "paused:", video.paused);
     });
     tile.appendChild(volumeControl);
   }
