@@ -1,5 +1,5 @@
 import { connect, on, sendChat, kickUser, disconnect } from "./realtime.js";
-import { createWebRTCManager } from "./webrtc.js?v=2";
+import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -66,6 +66,7 @@ let camOn = false;
 let facingMode = "user";
 let screenShareActive = false;
 let camWasOnBeforeShare = false; // para saber si hay que volver a prender la camara al dejar de compartir
+let camTrackKeptAliveForShare = null; // la camara real, viva de fondo mientras se comparte (para el moderador)
 let audioReplacedForShare = false; // si se toco el audio al compartir (por eso hay que restaurarlo al terminar)
 let micTrackSetAsideForShare = null; // el track real del microfono, guardado mientras se comparte pantalla
 let audioMixContext = null; // AudioContext usado para mezclar microfono + audio de la pantalla
@@ -324,7 +325,20 @@ async function joinRoom() {
       video.srcObject = stream;
       video._connectVolumeControl?.();
     },
-    onRemoveStream: (peerId) => removeVideoTile(peerId),
+    onRemoveStream: (peerId) => {
+      removeVideoTile(peerId);
+      removeVideoTile(`${peerId}-modcam`);
+    },
+    // Solo le llega algo a esto si yo soy moderador y otra persona esta
+    // compartiendo pantalla: es su camara real, aparte, en su propio
+    // recuadro (ver sendCameraToModerators en webrtc.js).
+    onModeratorExtraStream: (peerId, stream, track) => {
+      const info = knownMembers.get(peerId);
+      const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
+      video.srcObject = stream;
+      video._connectVolumeControl?.();
+      track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
+    },
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
   // Sincronizar el estado interno ANTES de agregar cualquier track: sin esto,
@@ -382,10 +396,11 @@ function cleanupAndReturnToJoinScreen() {
   roomListeners.length = 0;
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
-  // si se salio de la sala mientras se compartia pantalla con el microfono
-  // mezclado, el track real del microfono queda aparte (no es parte de
-  // localStream en ese momento) y hay que apagarlo aca a mano.
+  // si se salio de la sala mientras se compartia pantalla, tanto el
+  // microfono mezclado como la camara real siguen vivos aparte (no son
+  // parte de localStream en ese momento) y hay que apagarlos aca a mano.
   if (micTrackSetAsideForShare) micTrackSetAsideForShare.stop();
+  if (camTrackKeptAliveForShare) camTrackKeptAliveForShare.stop();
   disconnect();
   els.videoGrid.innerHTML = "";
   els.chatMessages.innerHTML = "";
@@ -394,6 +409,7 @@ function cleanupAndReturnToJoinScreen() {
   camOn = false;
   screenShareActive = false;
   camWasOnBeforeShare = false;
+  camTrackKeptAliveForShare = null;
   audioReplacedForShare = false;
   micTrackSetAsideForShare = null;
   micGainNode = null;
@@ -562,8 +578,14 @@ els.shareScreenBtn.addEventListener("click", async () => {
   const existingVideoTrack = localStream.getVideoTracks()[0];
   camWasOnBeforeShare = camOn && !!existingVideoTrack;
   if (existingVideoTrack) {
+    // La camara real NO se apaga: sigue capturando de fondo para poder
+    // mandarsela al moderador (si hay uno), igual que ya puede ver/escuchar
+    // a cualquiera aunque se haya silenciado para el resto -- ver el aviso
+    // de la pantalla de ingreso. Al resto de la sala le sigue llegando la
+    // pantalla, nunca la camara, mientras dure la transmision.
+    camTrackKeptAliveForShare = existingVideoTrack;
     localStream.removeTrack(existingVideoTrack);
-    existingVideoTrack.stop();
+    webrtcManager.sendCameraToModerators(existingVideoTrack);
   }
   localStream.addTrack(screenTrack);
   const localVideoEl = document.querySelector(`#tile-${userId} video`);
@@ -642,18 +664,15 @@ async function stopScreenShare() {
     localStream.removeTrack(screenTrack);
     screenTrack.stop();
   }
+  webrtcManager.stopCameraToModerators();
   camOn = false;
-  if (camWasOnBeforeShare) {
-    try {
-      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-      const newCamTrack = camStream.getVideoTracks()[0];
-      localStream.addTrack(newCamTrack);
-      webrtcManager.replaceLocalVideoTrack(newCamTrack);
-      camOn = true;
-    } catch (err) {
-      // no se pudo recuperar la camara (permiso revocado, etc.): se queda
-      // sin video, igual que si el usuario la hubiera apagado a mano.
-    }
+  if (camTrackKeptAliveForShare) {
+    // se recupera la misma camara real que siguio prendida de fondo (sin
+    // volver a pedir permiso ni reiniciar el hardware).
+    localStream.addTrack(camTrackKeptAliveForShare);
+    webrtcManager.replaceLocalVideoTrack(camTrackKeptAliveForShare);
+    camTrackKeptAliveForShare = null;
+    camOn = camWasOnBeforeShare;
   }
   camWasOnBeforeShare = false;
   const localVideoEl = document.querySelector(`#tile-${userId} video`);
