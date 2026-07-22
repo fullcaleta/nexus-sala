@@ -153,11 +153,19 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // abajo) pueda conectar el audio real la primera vez que llega.
     video._connectVolumeControl = () => {
       if (gainNode) return; // ya conectado, no se puede conectar dos veces
+      const stream = video.srcObject;
+      if (!stream) return;
       const ctx = getSharedAudioContext();
-      const source = ctx.createMediaElementSource(video);
+      // Se toma el audio directo de la transmision (createMediaStreamSource),
+      // no "por dentro" del <video> (createMediaElementSource): en iOS/Safari
+      // viejo esa segunda forma es conocida por fallar con transmisiones en
+      // vivo. Se silencia el <video> nativo para que el unico audio audible
+      // sea el que pasa por este control de volumen.
+      const source = ctx.createMediaStreamSource(stream);
       gainNode = ctx.createGain();
       gainNode.gain.value = Number(volumeControl.value);
       source.connect(gainNode).connect(ctx.destination);
+      video.muted = true;
     };
   }
 
