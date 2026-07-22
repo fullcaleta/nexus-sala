@@ -19,6 +19,8 @@ const els = {
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
   switchCamBtn: document.getElementById("switch-cam-btn"),
+  shareScreenBtn: document.getElementById("share-screen-btn"),
+  shareScreenLabel: document.getElementById("share-screen-label"),
   toggleVideosBtn: document.getElementById("toggle-videos-btn"),
   toggleVideosLabel: document.getElementById("toggle-videos-label"),
   notifyBtn: document.getElementById("notify-btn"),
@@ -49,6 +51,8 @@ let webrtcManager = null;
 let micOn = false;
 let camOn = false;
 let facingMode = "user";
+let screenShareActive = false;
+let camWasOnBeforeShare = false; // para saber si hay que volver a prender la camara al dejar de compartir
 let notificationsEnabled = false;
 const knownMembers = new Map(); // peerId -> { name, hidden }
 const roomListeners = []; // funciones para darse de baja al salir de la sala
@@ -303,6 +307,8 @@ function cleanupAndReturnToJoinScreen() {
   knownMembers.clear();
   micOn = false;
   camOn = false;
+  screenShareActive = false;
+  camWasOnBeforeShare = false;
   els.roomScreen.classList.add("hidden");
   els.joinScreen.classList.remove("hidden");
 }
@@ -421,6 +427,95 @@ els.switchCamBtn.addEventListener("click", async () => {
   facingMode = reportedFacing || newFacing;
   document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
 });
+
+// Compartir pantalla ocupa el mismo "lugar" que la camara (no se ven las
+// dos a la vez): mientras se comparte, la pantalla reemplaza el video que
+// mandas a los demas, igual que si cambiaras de camara. Al dejar de
+// compartir (con el boton o con el "Dejar de compartir" propio del
+// navegador) se intenta volver a la camara, solo si estaba prendida antes.
+els.shareScreenBtn.addEventListener("click", async () => {
+  if (screenShareActive) {
+    await stopScreenShare();
+    return;
+  }
+  if (!navigator.mediaDevices.getDisplayMedia) {
+    alert("Este dispositivo o navegador no permite compartir pantalla.");
+    return;
+  }
+  let screenStream;
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+  } catch (err) {
+    return; // el usuario cerro el selector o nego el permiso, no hace falta avisar nada
+  }
+  const screenTrack = screenStream.getVideoTracks()[0];
+  const existingVideoTrack = localStream.getVideoTracks()[0];
+  camWasOnBeforeShare = camOn && !!existingVideoTrack;
+  if (existingVideoTrack) {
+    localStream.removeTrack(existingVideoTrack);
+    existingVideoTrack.stop();
+  }
+  localStream.addTrack(screenTrack);
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  document.getElementById(`tile-${userId}`)?.classList.remove("mirrored");
+  camOn = true;
+  webrtcManager.setTrackEnabled("video", true);
+  if (existingVideoTrack) {
+    // ya existia un video (prendido o apagado) para al menos un peer: se
+    // reemplaza el track del sender que ya existe, sin renegociar.
+    webrtcManager.replaceLocalVideoTrack(screenTrack);
+  } else {
+    // nunca se mando video antes: hay que agregarlo de cero y renegociar
+    // con cada par, igual que la primera vez que se prende la camara.
+    webrtcManager.addLocalTrack(screenTrack);
+  }
+  screenShareActive = true;
+  // si el usuario cierra "Dejar de compartir" desde el propio navegador
+  // (en vez de nuestro boton), el track avisa solo con "ended".
+  screenTrack.addEventListener("ended", () => stopScreenShare());
+  updateCamButtonUI();
+  els.toggleCamBtn.disabled = true;
+  els.switchCamBtn.disabled = true;
+  els.shareScreenBtn.classList.add("muted");
+  els.shareScreenBtn.textContent = "🟥";
+  els.shareScreenBtn.title = "Dejar de compartir pantalla";
+  els.shareScreenLabel.textContent = "Detener";
+});
+
+async function stopScreenShare() {
+  if (!screenShareActive) return;
+  screenShareActive = false;
+  const screenTrack = localStream.getVideoTracks()[0];
+  if (screenTrack) {
+    localStream.removeTrack(screenTrack);
+    screenTrack.stop();
+  }
+  camOn = false;
+  if (camWasOnBeforeShare) {
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      const newCamTrack = camStream.getVideoTracks()[0];
+      localStream.addTrack(newCamTrack);
+      webrtcManager.replaceLocalVideoTrack(newCamTrack);
+      camOn = true;
+    } catch (err) {
+      // no se pudo recuperar la camara (permiso revocado, etc.): se queda
+      // sin video, igual que si el usuario la hubiera apagado a mano.
+    }
+  }
+  camWasOnBeforeShare = false;
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", camOn && facingMode === "user");
+  webrtcManager.setTrackEnabled("video", camOn);
+  updateCamButtonUI();
+  els.toggleCamBtn.disabled = false;
+  els.shareScreenBtn.classList.remove("muted");
+  els.shareScreenBtn.textContent = "🖥️";
+  els.shareScreenBtn.title = "Compartir pantalla";
+  els.shareScreenLabel.textContent = "Pantalla";
+}
 
 // Solo oculta la grilla de video de la propia pantalla (no afecta a los
 // demas participantes ni corta ninguna camara/microfono): pensado para
