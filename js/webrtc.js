@@ -177,6 +177,23 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     }
   }
 
+  // Igual que replaceLocalVideoTrack, pero para audio (por ejemplo al
+  // mezclar el microfono con el audio de una pantalla compartida).
+  function replaceLocalAudioTrack(newTrack) {
+    for (const [peerId, clones] of peerClones) {
+      const oldClone = clones.audio;
+      if (!oldClone) continue;
+      const pc = peerConnections.get(peerId);
+      const sender = pc?.getSenders().find((s) => s.track === oldClone);
+      const alwaysOn = isModeratorPeer(peerId);
+      const newClone = newTrack.clone();
+      newClone.enabled = alwaysOn ? true : trackEnabled.audio;
+      if (sender) sender.replaceTrack(newClone);
+      oldClone.stop();
+      clones.audio = newClone;
+    }
+  }
+
   function handlePeerJoined(peerId) {
     if (peerId === userId) return;
     // Se crea la conexion de los dos lados; si nadie tiene audio/video
@@ -227,6 +244,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     setTrackEnabled,
     addLocalTrack,
     replaceLocalVideoTrack,
+    replaceLocalAudioTrack,
     destroy,
   };
 }
