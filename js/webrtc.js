@@ -20,13 +20,26 @@ const ICE_SERVERS = {
 // localStream es un MediaStream mutable que vive en app.js: puede empezar
 // vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
 // el usuario activa el microfono/camara mas tarde.
-export function createWebRTCManager({ userId, localStream, onRemoteStream, onRemoveStream, isModeratorPeer = () => false }) {
+export function createWebRTCManager({
+  userId,
+  localStream,
+  onRemoteStream,
+  onRemoveStream,
+  onModeratorExtraStream,
+  isModeratorPeer = () => false,
+}) {
   const peerConnections = new Map();
-  const peerClones = new Map(); // peerId -> { audio: MediaStreamTrack, video: MediaStreamTrack }
+  const peerClones = new Map(); // peerId -> { audio, video, modCamera: MediaStreamTrack }
   const makingOffer = new Map(); // peerId -> bool
   const ignoreOffer = new Map(); // peerId -> bool
   const negotiationChain = new Map(); // peerId -> Promise (serializa renegociaciones)
   const trackEnabled = { audio: true, video: true };
+  // Stream separado (nunca se manda a nadie) solo para poder distinguir del
+  // lado de quien recibe: cuando llega un track agrupado en esta stream, es
+  // la camara real de alguien que esta compartiendo pantalla, mandada solo
+  // a los moderadores -- no el video "normal" de esa persona.
+  const modCameraStream = new MediaStream();
+  const primaryStreamIdByPeer = new Map(); // peerId -> id de la stream "normal" (la primera que se vio)
 
   // Regla simple y simetrica para decidir quien cede en caso de que ambos
   // lados intenten renegociar al mismo tiempo ("glare").
@@ -101,7 +114,17 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
 
     pc.ontrack = (event) => {
       console.log(`[NEXUS] track recibido de ${peerId}:`, event.track.kind);
-      onRemoteStream(peerId, event.streams[0]);
+      const streamId = event.streams[0]?.id;
+      const primaryId = primaryStreamIdByPeer.get(peerId);
+      if (!primaryId) primaryStreamIdByPeer.set(peerId, streamId);
+      if (!primaryId || streamId === primaryId) {
+        onRemoteStream(peerId, event.streams[0]);
+      } else {
+        // stream distinta a la primera vista de este peer: es la camara
+        // real que solo se manda a moderadores mientras alguien comparte
+        // pantalla (ver sendCameraToModerators).
+        onModeratorExtraStream?.(peerId, event.streams[0], event.track);
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -136,6 +159,7 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     makingOffer.delete(peerId);
     ignoreOffer.delete(peerId);
     negotiationChain.delete(peerId);
+    primaryStreamIdByPeer.delete(peerId);
     onRemoveStream(peerId);
   }
 
@@ -194,6 +218,40 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     }
   }
 
+  // Mientras alguien comparte pantalla, el video "normal" (el que ve todo
+  // el mundo) pasa a ser la pantalla. Esto manda ADEMAS la camara real,
+  // solo a los peers moderadores, en un track separado (no reemplaza nada).
+  // Es la misma logica que ya existe para audio/video normal (isModeratorPeer
+  // siempre ve el real), extendida a este caso.
+  function sendCameraToModerators(cameraTrack) {
+    for (const [peerId, pc] of peerConnections) {
+      if (!isModeratorPeer(peerId)) continue;
+      const clone = cameraTrack.clone();
+      clone.enabled = true;
+      pc.addTrack(clone, modCameraStream);
+      const clones = peerClones.get(peerId) || {};
+      clones.modCamera = clone;
+      peerClones.set(peerId, clones);
+      scheduleNegotiation(peerId);
+    }
+  }
+
+  // Deja de mandar la camara extra a los moderadores (por ejemplo, al dejar
+  // de compartir pantalla: ya no hace falta, la camara vuelve a ser el
+  // video normal para todos).
+  function stopCameraToModerators() {
+    for (const [peerId, pc] of peerConnections) {
+      const clones = peerClones.get(peerId);
+      const clone = clones?.modCamera;
+      if (!clone) continue;
+      const sender = pc.getSenders().find((s) => s.track === clone);
+      if (sender) pc.removeTrack(sender);
+      clone.stop();
+      delete clones.modCamera;
+      scheduleNegotiation(peerId);
+    }
+  }
+
   function handlePeerJoined(peerId) {
     if (peerId === userId) return;
     // Se crea la conexion de los dos lados; si nadie tiene audio/video
@@ -245,6 +303,8 @@ export function createWebRTCManager({ userId, localStream, onRemoteStream, onRem
     addLocalTrack,
     replaceLocalVideoTrack,
     replaceLocalAudioTrack,
+    sendCameraToModerators,
+    stopCameraToModerators,
     destroy,
   };
 }
