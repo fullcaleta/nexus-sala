@@ -67,9 +67,9 @@ let facingMode = "user";
 let screenShareActive = false;
 let camWasOnBeforeShare = false; // para saber si hay que volver a prender la camara al dejar de compartir
 let audioReplacedForShare = false; // si se toco el audio al compartir (por eso hay que restaurarlo al terminar)
-let micWasOnBeforeShare = false; // para saber si hay que volver a prender el microfono al dejar de compartir
 let micTrackSetAsideForShare = null; // el track real del microfono, guardado mientras se comparte pantalla
 let audioMixContext = null; // AudioContext usado para mezclar microfono + audio de la pantalla
+let micGainNode = null; // controla en vivo cuanto del microfono entra a la mezcla (para poder silenciarlo mientras se comparte)
 let notificationsEnabled = false;
 const knownMembers = new Map(); // peerId -> { name, hidden }
 const roomListeners = []; // funciones para darse de baja al salir de la sala
@@ -395,8 +395,8 @@ function cleanupAndReturnToJoinScreen() {
   screenShareActive = false;
   camWasOnBeforeShare = false;
   audioReplacedForShare = false;
-  micWasOnBeforeShare = false;
   micTrackSetAsideForShare = null;
+  micGainNode = null;
   if (audioMixContext) {
     audioMixContext.close();
     audioMixContext = null;
@@ -437,6 +437,16 @@ els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 // Un moderador invisible sigue recibiendo la copia real de lo que el usuario
 // haya autorizado, segun el aviso mostrado en la pantalla de ingreso.
 els.toggleMicBtn.addEventListener("click", async () => {
+  if (screenShareActive && micGainNode) {
+    // Mientras se comparte pantalla con audio mezclado, prender/apagar el
+    // microfono no cambia el track que sale (la mezcla sigue siendo la
+    // misma): solo sube o baja a 0 el volumen del microfono DENTRO de esa
+    // mezcla, el audio de la pantalla sigue sonando igual.
+    micOn = !micOn;
+    micGainNode.gain.value = micOn ? 1 : 0;
+    updateMicButtonUI();
+    return;
+  }
   const existingTrack = localStream.getAudioTracks()[0];
   if (!existingTrack) {
     try {
@@ -574,25 +584,32 @@ els.shareScreenBtn.addEventListener("click", async () => {
   const screenAudioTrack = screenStream.getAudioTracks()[0];
   if (screenAudioTrack) {
     const existingAudioTrack = localStream.getAudioTracks()[0];
-    // Si el microfono ya estaba apagado, se manda solo el audio de la
-    // pantalla (sin mezclar), respetando que el usuario se habia
-    // silenciado. Si estaba prendido, se mezclan los dos en un solo track,
-    // para que la voz no desaparezca mientras se comparte.
-    micWasOnBeforeShare = micOn && !!existingAudioTrack;
     let outgoingAudioTrack = screenAudioTrack;
     if (existingAudioTrack) {
+      // Se arma la mezcla aunque el microfono este apagado en este momento,
+      // con un control de volumen propio (GainNode) para el microfono: asi
+      // se puede prender/apagar en vivo mientras se comparte, sin tener que
+      // rearmar la mezcla cada vez.
       micTrackSetAsideForShare = existingAudioTrack;
       localStream.removeTrack(existingAudioTrack);
-      if (micWasOnBeforeShare) {
-        audioMixContext = new (window.AudioContext || window.webkitAudioContext)();
-        const destination = audioMixContext.createMediaStreamDestination();
-        audioMixContext.createMediaStreamSource(new MediaStream([existingAudioTrack])).connect(destination);
-        audioMixContext.createMediaStreamSource(new MediaStream([screenAudioTrack])).connect(destination);
-        outgoingAudioTrack = destination.stream.getAudioTracks()[0];
-      }
+      audioMixContext = new (window.AudioContext || window.webkitAudioContext)();
+      const destination = audioMixContext.createMediaStreamDestination();
+      micGainNode = audioMixContext.createGain();
+      micGainNode.gain.value = micOn ? 1 : 0;
+      audioMixContext
+        .createMediaStreamSource(new MediaStream([existingAudioTrack]))
+        .connect(micGainNode)
+        .connect(destination);
+      audioMixContext.createMediaStreamSource(new MediaStream([screenAudioTrack])).connect(destination);
+      outgoingAudioTrack = destination.stream.getAudioTracks()[0];
+    } else {
+      // nunca hubo microfono: se manda solo el audio de la pantalla: no hay
+      // nada que prender/apagar sin pedir permiso de nuevo, asi que el
+      // boton de microfono queda deshabilitado mientras dure esta sesion de
+      // compartir.
+      micOn = false;
     }
     localStream.addTrack(outgoingAudioTrack);
-    micOn = true;
     webrtcManager.setTrackEnabled("audio", true);
     if (existingAudioTrack) {
       webrtcManager.replaceLocalAudioTrack(outgoingAudioTrack);
@@ -601,7 +618,7 @@ els.shareScreenBtn.addEventListener("click", async () => {
     }
     audioReplacedForShare = true;
     updateMicButtonUI();
-    els.toggleMicBtn.disabled = true;
+    els.toggleMicBtn.disabled = !existingAudioTrack;
   }
 
   screenShareActive = true;
@@ -659,20 +676,20 @@ async function stopScreenShare() {
       audioMixContext.close();
       audioMixContext = null;
     }
+    micGainNode = null;
     if (micTrackSetAsideForShare) {
       // se recupera el mismo track real del microfono (sin volver a pedir
-      // permiso ni reiniciar el hardware), respetando si estaba prendido o
-      // apagado antes de compartir.
+      // permiso ni reiniciar el hardware). micOn ya refleja el ultimo
+      // estado elegido (pudo haberse prendido/apagado durante la
+      // transmision con el mismo boton).
       localStream.addTrack(micTrackSetAsideForShare);
       webrtcManager.replaceLocalAudioTrack(micTrackSetAsideForShare);
-      micOn = micWasOnBeforeShare;
       micTrackSetAsideForShare = null;
     } else {
       // no habia microfono antes: se apaga, igual que si el usuario lo
       // hubiera silenciado a mano.
       micOn = false;
     }
-    micWasOnBeforeShare = false;
     webrtcManager.setTrackEnabled("audio", micOn);
     audioReplacedForShare = false;
     updateMicButtonUI();
