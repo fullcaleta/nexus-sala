@@ -1,5 +1,5 @@
 import { connect, on, sendChat, kickUser, disconnect } from "./realtime.js";
-import { createWebRTCManager } from "./webrtc.js";
+import { createWebRTCManager } from "./webrtc.js?v=2";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -53,6 +53,10 @@ let camOn = false;
 let facingMode = "user";
 let screenShareActive = false;
 let camWasOnBeforeShare = false; // para saber si hay que volver a prender la camara al dejar de compartir
+let audioReplacedForShare = false; // si se toco el audio al compartir (por eso hay que restaurarlo al terminar)
+let micWasOnBeforeShare = false; // para saber si hay que volver a prender el microfono al dejar de compartir
+let micTrackSetAsideForShare = null; // el track real del microfono, guardado mientras se comparte pantalla
+let audioMixContext = null; // AudioContext usado para mezclar microfono + audio de la pantalla
 let notificationsEnabled = false;
 const knownMembers = new Map(); // peerId -> { name, hidden }
 const roomListeners = []; // funciones para darse de baja al salir de la sala
@@ -101,10 +105,51 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   label.className = "video-tile-label";
   label.textContent = isSelf ? `${name} (tú${isModerator ? " · invisible" : ""})` : name;
 
+  const fullscreenBtn = document.createElement("button");
+  fullscreenBtn.className = "video-tile-fullscreen-btn";
+  fullscreenBtn.type = "button";
+  fullscreenBtn.title = "Ver en pantalla completa";
+  fullscreenBtn.textContent = "⛶";
+  fullscreenBtn.addEventListener("click", () => enterFullscreen(video));
+
   tile.appendChild(video);
   tile.appendChild(label);
+  tile.appendChild(fullscreenBtn);
+
+  // El volumen de cada persona se controla solo del lado de quien escucha,
+  // sin tocar nada de la conexion: no tiene sentido para tu propio recuadro
+  // (no te escuchas a vos mismo).
+  if (!isLocal) {
+    const volumeControl = document.createElement("input");
+    volumeControl.type = "range";
+    volumeControl.className = "video-tile-volume";
+    volumeControl.min = "0";
+    volumeControl.max = "1";
+    volumeControl.step = "0.05";
+    volumeControl.value = "1";
+    volumeControl.title = "Volumen de esta persona";
+    volumeControl.addEventListener("input", () => {
+      video.volume = Number(volumeControl.value);
+    });
+    tile.appendChild(volumeControl);
+  }
+
   els.videoGrid.appendChild(tile);
   return video;
+}
+
+// Safari/iOS no soporta el pedido de pantalla completa estandar sobre
+// cualquier elemento: hay que pedirlo directo sobre el <video> con su
+// propio metodo. Se prueban los tres en orden segun lo que soporte cada
+// navegador.
+function enterFullscreen(videoEl) {
+  if (videoEl.requestFullscreen) {
+    videoEl.requestFullscreen();
+  } else if (videoEl.webkitRequestFullscreen) {
+    videoEl.webkitRequestFullscreen();
+  } else if (videoEl.webkitEnterFullscreen) {
+    videoEl.webkitEnterFullscreen();
+  }
 }
 
 function removeVideoTile(peerId) {
@@ -301,6 +346,10 @@ function cleanupAndReturnToJoinScreen() {
   roomListeners.length = 0;
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
+  // si se salio de la sala mientras se compartia pantalla con el microfono
+  // mezclado, el track real del microfono queda aparte (no es parte de
+  // localStream en ese momento) y hay que apagarlo aca a mano.
+  if (micTrackSetAsideForShare) micTrackSetAsideForShare.stop();
   disconnect();
   els.videoGrid.innerHTML = "";
   els.chatMessages.innerHTML = "";
@@ -309,6 +358,13 @@ function cleanupAndReturnToJoinScreen() {
   camOn = false;
   screenShareActive = false;
   camWasOnBeforeShare = false;
+  audioReplacedForShare = false;
+  micWasOnBeforeShare = false;
+  micTrackSetAsideForShare = null;
+  if (audioMixContext) {
+    audioMixContext.close();
+    audioMixContext = null;
+  }
   els.roomScreen.classList.add("hidden");
   els.joinScreen.classList.remove("hidden");
 }
@@ -444,7 +500,10 @@ els.shareScreenBtn.addEventListener("click", async () => {
   }
   let screenStream;
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    // El audio queda a criterio del navegador: solo lo entrega si el
+    // usuario tilda "Compartir audio" en el propio selector (y no todos los
+    // navegadores lo ofrecen para cualquier tipo de pantalla/pestaña).
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
   } catch (err) {
     return; // el usuario cerro el selector o nego el permiso, no hace falta avisar nada
   }
@@ -470,6 +529,40 @@ els.shareScreenBtn.addEventListener("click", async () => {
     // con cada par, igual que la primera vez que se prende la camara.
     webrtcManager.addLocalTrack(screenTrack);
   }
+
+  const screenAudioTrack = screenStream.getAudioTracks()[0];
+  if (screenAudioTrack) {
+    const existingAudioTrack = localStream.getAudioTracks()[0];
+    // Si el microfono ya estaba apagado, se manda solo el audio de la
+    // pantalla (sin mezclar), respetando que el usuario se habia
+    // silenciado. Si estaba prendido, se mezclan los dos en un solo track,
+    // para que la voz no desaparezca mientras se comparte.
+    micWasOnBeforeShare = micOn && !!existingAudioTrack;
+    let outgoingAudioTrack = screenAudioTrack;
+    if (existingAudioTrack) {
+      micTrackSetAsideForShare = existingAudioTrack;
+      localStream.removeTrack(existingAudioTrack);
+      if (micWasOnBeforeShare) {
+        audioMixContext = new (window.AudioContext || window.webkitAudioContext)();
+        const destination = audioMixContext.createMediaStreamDestination();
+        audioMixContext.createMediaStreamSource(new MediaStream([existingAudioTrack])).connect(destination);
+        audioMixContext.createMediaStreamSource(new MediaStream([screenAudioTrack])).connect(destination);
+        outgoingAudioTrack = destination.stream.getAudioTracks()[0];
+      }
+    }
+    localStream.addTrack(outgoingAudioTrack);
+    micOn = true;
+    webrtcManager.setTrackEnabled("audio", true);
+    if (existingAudioTrack) {
+      webrtcManager.replaceLocalAudioTrack(outgoingAudioTrack);
+    } else {
+      webrtcManager.addLocalTrack(outgoingAudioTrack);
+    }
+    audioReplacedForShare = true;
+    updateMicButtonUI();
+    els.toggleMicBtn.disabled = true;
+  }
+
   screenShareActive = true;
   // si el usuario cierra "Dejar de compartir" desde el propio navegador
   // (en vez de nuestro boton), el track avisa solo con "ended".
@@ -511,6 +604,40 @@ async function stopScreenShare() {
   webrtcManager.setTrackEnabled("video", camOn);
   updateCamButtonUI();
   els.toggleCamBtn.disabled = false;
+
+  if (audioReplacedForShare) {
+    const outgoingAudioTrack = localStream.getAudioTracks()[0];
+    if (outgoingAudioTrack) {
+      // esto para tanto el audio "puro" de la pantalla como, si se mezclo,
+      // el track sintetico de la mezcla -- el track real del microfono esta
+      // a salvo aparte, en micTrackSetAsideForShare, y no se toca aca.
+      localStream.removeTrack(outgoingAudioTrack);
+      outgoingAudioTrack.stop();
+    }
+    if (audioMixContext) {
+      audioMixContext.close();
+      audioMixContext = null;
+    }
+    if (micTrackSetAsideForShare) {
+      // se recupera el mismo track real del microfono (sin volver a pedir
+      // permiso ni reiniciar el hardware), respetando si estaba prendido o
+      // apagado antes de compartir.
+      localStream.addTrack(micTrackSetAsideForShare);
+      webrtcManager.replaceLocalAudioTrack(micTrackSetAsideForShare);
+      micOn = micWasOnBeforeShare;
+      micTrackSetAsideForShare = null;
+    } else {
+      // no habia microfono antes: se apaga, igual que si el usuario lo
+      // hubiera silenciado a mano.
+      micOn = false;
+    }
+    micWasOnBeforeShare = false;
+    webrtcManager.setTrackEnabled("audio", micOn);
+    audioReplacedForShare = false;
+    updateMicButtonUI();
+    els.toggleMicBtn.disabled = false;
+  }
+
   els.shareScreenBtn.classList.remove("muted");
   els.shareScreenBtn.textContent = "🖥️";
   els.shareScreenBtn.title = "Compartir pantalla";
