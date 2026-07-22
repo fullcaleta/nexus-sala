@@ -46,6 +46,19 @@ function getUserId() {
 const userId = getUserId();
 let username = "";
 let isModerator = false;
+// Compartido por todos los recuadros remotos, para el control de volumen
+// (ver createVideoTile): iOS/Safari ignora el volume nativo del <video>
+// a proposito (solo dejan controlarlo con los botones fisicos del
+// telefono), asi que hace falta pasar el audio por Web Audio API, donde el
+// volumen si se puede ajustar por codigo en cualquier navegador.
+let sharedAudioContext = null;
+function getSharedAudioContext() {
+  if (!sharedAudioContext) {
+    sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (sharedAudioContext.state === "suspended") sharedAudioContext.resume();
+  return sharedAudioContext;
+}
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
 let micOn = false;
@@ -128,11 +141,24 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     volumeControl.step = "0.05";
     volumeControl.value = "1";
     volumeControl.title = "Volumen de esta persona";
+    // gainNode se crea recien cuando el video tenga stream de verdad (ver
+    // onRemoteStream en la funcion que llama a createVideoTile): antes de
+    // eso no hay audio que enrutar.
+    let gainNode = null;
     volumeControl.addEventListener("input", () => {
-      video.volume = Number(volumeControl.value);
-      console.log("[NEXUS-DEBUG] volumen", peerId, "->", video.volume, "muted:", video.muted, "paused:", video.paused);
+      if (gainNode) gainNode.gain.value = Number(volumeControl.value);
     });
     tile.appendChild(volumeControl);
+    // Se expone en el propio elemento para que quien asigna el stream (mas
+    // abajo) pueda conectar el audio real la primera vez que llega.
+    video._connectVolumeControl = () => {
+      if (gainNode) return; // ya conectado, no se puede conectar dos veces
+      const ctx = getSharedAudioContext();
+      const source = ctx.createMediaElementSource(video);
+      gainNode = ctx.createGain();
+      gainNode.gain.value = Number(volumeControl.value);
+      source.connect(gainNode).connect(ctx.destination);
+    };
   }
 
   els.videoGrid.appendChild(tile);
@@ -288,6 +314,7 @@ async function joinRoom() {
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
       const video = createVideoTile(peerId, info?.name || "Usuario");
       video.srcObject = stream;
+      video._connectVolumeControl?.();
     },
     onRemoveStream: (peerId) => removeVideoTile(peerId),
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
