@@ -414,6 +414,11 @@ els.joinForm.addEventListener("submit", async (e) => {
   }
   els.joinError.textContent = "";
   username = value.slice(0, 24);
+  // Crear/desbloquear el AudioContext compartido aca, dentro del propio
+  // toque del boton: en iOS/Safari un AudioContext creado fuera de un
+  // gesto directo del usuario queda "suspendido" para siempre y ningun
+  // audio suena, aunque el resto de la app funcione bien.
+  getSharedAudioContext();
   await joinRoom();
 });
 
