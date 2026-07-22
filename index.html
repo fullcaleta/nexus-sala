@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=2" />
+  <link rel="stylesheet" href="css/style.css?v=3" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -51,11 +51,29 @@
       <div id="video-grid" class="video-grid"></div>
 
       <div class="call-controls glass-panel">
-        <button id="toggle-mic-btn" class="btn btn-icon" title="Activar micrófono">🔇</button>
-        <button id="toggle-cam-btn" class="btn btn-icon" title="Activar cámara">🚫</button>
-        <button id="switch-cam-btn" class="btn btn-icon" title="Cambiar de cámara" disabled>🔄</button>
-        <button id="notify-btn" class="btn btn-icon" title="Activar notificaciones">🔕</button>
-        <button id="leave-btn" class="btn btn-danger" title="Salir de la sala">Salir</button>
+        <div class="control-item">
+          <button id="toggle-mic-btn" class="btn btn-icon" title="Activar micrófono">🔇</button>
+          <span id="toggle-mic-label" class="control-label">Micrófono</span>
+        </div>
+        <div class="control-item">
+          <button id="toggle-cam-btn" class="btn btn-icon" title="Activar cámara">📷</button>
+          <span id="toggle-cam-label" class="control-label">Cámara</span>
+        </div>
+        <div class="control-item">
+          <button id="switch-cam-btn" class="btn btn-icon" title="Cambiar de cámara" disabled>🔄</button>
+          <span class="control-label">Girar cámara</span>
+        </div>
+        <div class="control-item">
+          <button id="toggle-videos-btn" class="btn btn-icon" title="Ocultar cámaras">🎥</button>
+          <span id="toggle-videos-label" class="control-label">Ocultar video</span>
+        </div>
+        <div class="control-item">
+          <button id="notify-btn" class="btn btn-icon" title="Activar notificaciones">🔕</button>
+          <span id="notify-label" class="control-label">Avisos</span>
+        </div>
+        <div class="control-item">
+          <button id="leave-btn" class="btn btn-danger" title="Salir de la sala">Salir</button>
+        </div>
       </div>
     </section>
 
@@ -69,6 +87,6 @@
     </aside>
   </div>
 
-  <script type="module" src="js/app.js?v=3"></script>
+  <script type="module" src="js/app.js?v=4"></script>
 </body>
 </html>

@@ -9,3 +9,4 @@ ESTADO-DEL-PROYECTO.md
 # ademas contiene secretos (clave de TURN, token de DuckDNS) que no
 # deben quedar en un repositorio publico.
 server/
+docker/

@@ -19,6 +19,8 @@ const els = {
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
   switchCamBtn: document.getElementById("switch-cam-btn"),
+  toggleVideosBtn: document.getElementById("toggle-videos-btn"),
+  toggleVideosLabel: document.getElementById("toggle-videos-label"),
   notifyBtn: document.getElementById("notify-btn"),
 };
 
@@ -150,7 +152,8 @@ function updateMicButtonUI() {
 
 function updateCamButtonUI() {
   els.toggleCamBtn.classList.toggle("muted", !camOn);
-  els.toggleCamBtn.textContent = camOn ? "📷" : "🚫";
+  els.toggleCamBtn.textContent = "📷";
+  els.toggleCamBtn.title = camOn ? "Apagar cámara" : "Activar cámara";
   els.switchCamBtn.disabled = !localStream.getVideoTracks()[0];
   const localTile = document.getElementById(`tile-${userId}`);
   if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
@@ -417,6 +420,17 @@ els.switchCamBtn.addEventListener("click", async () => {
   const reportedFacing = newTrack.getSettings().facingMode;
   facingMode = reportedFacing || newFacing;
   document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
+});
+
+// Solo oculta la grilla de video de la propia pantalla (no afecta a los
+// demas participantes ni corta ninguna camara/microfono): pensado para
+// cuando hay mucha gente y los recuadros de video empujan el chat lejos.
+els.toggleVideosBtn.addEventListener("click", () => {
+  const hidden = els.videoGrid.classList.toggle("collapsed");
+  els.toggleVideosBtn.classList.toggle("active", hidden);
+  els.toggleVideosBtn.textContent = hidden ? "🙈" : "🎥";
+  els.toggleVideosBtn.title = hidden ? "Mostrar cámaras" : "Ocultar cámaras";
+  els.toggleVideosLabel.textContent = hidden ? "Mostrar video" : "Ocultar video";
 });
 
 els.notifyBtn.addEventListener("click", async () => {
