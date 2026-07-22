@@ -332,6 +332,18 @@ body {
   background: #0d0c16;
 }
 
+/* Dentro del recuadro chico, "cover" recorta los bordes para llenar el
+   marco (se ve bien con una cara). En pantalla completa eso corta contenido
+   real (por ejemplo el borde de una pantalla compartida): ahi se muestra
+   todo sin recortar, con franjas negras si hace falta. */
+.video-tile video:fullscreen,
+.video-tile video:-webkit-full-screen {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
 /* Efecto espejo solo para tu propia vista previa (como te ves al mirarte a
    un espejo, con cualquiera de las dos camaras). Los demas participantes
    ven tu video sin espejar, tal cual lo capta la camara, para que la
