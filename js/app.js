@@ -17,6 +17,8 @@ const els = {
   chatInput: document.getElementById("chat-input"),
   emojiBtn: document.getElementById("emoji-btn"),
   emojiPicker: document.getElementById("emoji-picker"),
+  emojiTabs: document.getElementById("emoji-tabs"),
+  emojiGrid: document.getElementById("emoji-grid"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
@@ -704,31 +706,87 @@ els.chatForm.addEventListener("submit", async (e) => {
 // se crean solas al abrir un privado, ver ensureDmTab/ensureModAllTab).
 els.chatTabs.querySelector('[data-thread="general"]').addEventListener("click", () => switchThread("general"));
 
-// Selector de emojis: lista chica y curada (no una base completa de
-// Unicode), alcanza de sobra para un chat privado de familia/amigos.
-const EMOJI_LIST = [
-  "😀", "😂", "😅", "😊", "😍", "😘", "😜", "🤔",
-  "😎", "😭", "😡", "🥳", "😴", "🤯", "😱", "🥰",
-  "😇", "🤗", "🙄", "😏", "👍", "👎", "👏", "🙏",
-  "💪", "🤝", "👋", "🤙", "👀", "❤️", "💔", "🔥",
-  "✨", "🎉", "🎂", "☕", "🍕", "🍺", "⚽", "🎮",
-  "📷", "🎵", "💤", "💯", "✅", "❌", "⚠️", "🚀",
+// Selector de emojis: no es la base completa de Unicode (son miles, con
+// variantes de tono de piel y genero, y no hay forma practica de traerla
+// entera sin una libreria externa), pero cubre una lista amplia organizada
+// por categoria, pensada para alcanzar todo lo que se usa en la practica.
+const EMOJI_CATEGORIES = [
+  {
+    icon: "😀",
+    title: "Caras y emociones",
+    emojis: "😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 😉 😊 😇 🥰 😍 🤩 😘 😗 😚 😙 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 🫥 😏 😒 🙄 😬 🤥 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 😵‍💫 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠️ 💩 🤡".split(" "),
+  },
+  {
+    icon: "👋",
+    title: "Gestos y personas",
+    emojis: "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦵 🦿 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 💋 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷".split(" "),
+  },
+  {
+    icon: "🐶",
+    title: "Animales y naturaleza",
+    emojis: "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐽 🐸 🐵 🙈 🙉 🙊 🐒 🐔 🐧 🐦 🐤 🐣 🐥 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🕸️ 🦂 🐢 🐍 🦎 🦖 🦕 🐙 🦑 🦐 🦞 🦀 🐡 🐠 🐟 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🦣 🐘 🦛 🦏 🐪 🐫 🦒 🦘 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🐩 🦮 🐈 🐓 🦃 🦤 🦚 🦜 🦢 🦩 🕊️ 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔 🌵 🎄 🌲 🌳 🌴 🌱 🌿 ☘️ 🍀 🍃 🍂 🍁 🍄 🌾 💐 🌷 🌹 🌺 🌸 🌼 🌻 🌞 🌙 🌎 🌍 🌏 💫 ⭐ 🌟 ✨ ⚡ 🔥 🌈 ☀️ ⛅ 🌧️ ⛈️ ❄️ ☃️ 🌊".split(" "),
+  },
+  {
+    icon: "🍕",
+    title: "Comida y bebida",
+    emojis: "🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🥐 🥯 🍞 🥖 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 🍼 ☕ 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾".split(" "),
+  },
+  {
+    icon: "⚽",
+    title: "Actividades",
+    emojis: "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖️ 🏵️ 🎗️ 🎫 🎟️ 🎪 🤹 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🎸 🪕 🎻 🎮 🕹️ 🎰 🎲 🧩 ♟️ 🎯 🎳 🎮 🧸".split(" "),
+  },
+  {
+    icon: "✈️",
+    title: "Viajes y lugares",
+    emojis: "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🛵 🏍️ 🛺 🚲 🛴 🚨 🚔 🚍 🚘 🚖 🚡 🚠 🚟 🚃 🚋 🚞 🚝 🚄 🚅 🚈 🚂 🚆 🚇 🚊 🚉 ✈️ 🛫 🛬 🛩️ 💺 🛰️ 🚀 🛸 🚁 🛶 ⛵ 🚤 🛥️ 🛳️ ⛴️ 🚢 ⚓ 🪝 ⛽ 🚧 🚦 🚥 🚏 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏔️ 🗻 🏕️ ⛺ 🏠 🏡 🏘️ 🏚️ 🏗️ 🏭 🏢 🏬 🏣 🏤 🏥 🏦 🏨 🏪 🏫 🏩 💒 🏛️ ⛪ 🕌 🕍 🛕 🕋".split(" "),
+  },
+  {
+    icon: "💡",
+    title: "Objetos",
+    emojis: "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 💽 💾 💿 📀 📷 📸 📹 🎥 📽️ 🎞️ 📞 ☎️ 📟 📠 📺 📻 🎙️ 🎚️ 🎛️ 🧭 ⏱️ ⏲️ ⏰ 🕰️ ⌛ ⏳ 📡 🔋 🪫 🔌 💡 🔦 🕯️ 🪔 🧯 🛢️ 💸 💵 💴 💶 💷 🪙 💰 💳 🧾 💎 ⚖️ 🪜 🧰 🪛 🔧 🔨 ⚒️ 🛠️ ⛏️ 🪚 🔩 ⚙️ 🪤 🧱 ⛓️ 🧲 🔫 💣 🧨 🪓 🔪 🗡️ ⚔️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 💈 ⚗️ 🔭 🔬 🕳️ 🩹 💊 💉 🩸 🧬 🦠 🧫 🧪 🌡️ 🧹 🪠 🧺 🧻 🚽 🚿 🛁 🪒 🧴 🧷 🧵 🧶 🪡 👓 🕶️ 🥽 🥼 🦺 👔 👕 👖 🧣 🧤 🧥 🧦 👗 👘 🥻 🩱 🩲 🩳 👙 👚 👛 👜 👝 🎒 👞 👟 🥾 👠 👡 🩰 👢 👑 👒 🎩 🎓 🧢 ⛑️ 💄 💍 💼".split(" "),
+  },
+  {
+    icon: "❤️",
+    title: "Símbolos y corazones",
+    emojis: "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❤️‍🔥 ❤️‍🩹 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ 🉑 ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 🚭 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 〽️ ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔢 #️⃣ *️⃣ ⏏️ ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ ⏫ ⏬ ◀️ 🔼 🔽 ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↕️ ↔️ ↪️ ↩️ ⤴️ ⤵️ 🔀 🔁 🔂 🔄 🔃 🎵 🎶 ➕ ➖ ➗ ✖️ 🟰 ♾️ 💲 💱 ™️ ©️ ®️ 👁️‍🗨️ 🔚 🔙 🔛 🔝 🔜 〰️ ➰ ➿ ✔️ ☑️ 🔘 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪ 🟤 🔺 🔻 🔸 🔹 🔶 🔷 🔳 🔲 ▪️ ▫️ ◾ ◽ ◼️ ◻️ ⬛ ⬜ 🟥 🟧 🟨 🟩 🟦 🟪 🟫".split(" "),
+  },
 ];
-for (const emoji of EMOJI_LIST) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = emoji;
-  btn.addEventListener("click", () => {
-    const start = els.chatInput.selectionStart ?? els.chatInput.value.length;
-    const end = els.chatInput.selectionEnd ?? els.chatInput.value.length;
-    const value = els.chatInput.value;
-    els.chatInput.value = value.slice(0, start) + emoji + value.slice(end);
-    const cursor = start + emoji.length;
-    els.chatInput.focus();
-    els.chatInput.setSelectionRange(cursor, cursor);
-  });
-  els.emojiPicker.appendChild(btn);
+
+function renderEmojiCategory(index) {
+  const category = EMOJI_CATEGORIES[index];
+  els.emojiGrid.innerHTML = "";
+  for (const emoji of category.emojis) {
+    if (!emoji) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = emoji;
+    btn.addEventListener("click", () => {
+      const start = els.chatInput.selectionStart ?? els.chatInput.value.length;
+      const end = els.chatInput.selectionEnd ?? els.chatInput.value.length;
+      const value = els.chatInput.value;
+      els.chatInput.value = value.slice(0, start) + emoji + value.slice(end);
+      const cursor = start + emoji.length;
+      els.chatInput.focus();
+      els.chatInput.setSelectionRange(cursor, cursor);
+    });
+    els.emojiGrid.appendChild(btn);
+  }
+  for (const tab of els.emojiTabs.children) {
+    tab.classList.toggle("active", Number(tab.dataset.index) === index);
+  }
 }
+
+EMOJI_CATEGORIES.forEach((category, index) => {
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.textContent = category.icon;
+  tab.title = category.title;
+  tab.dataset.index = String(index);
+  tab.addEventListener("click", () => renderEmojiCategory(index));
+  els.emojiTabs.appendChild(tab);
+});
+renderEmojiCategory(0);
 
 els.emojiBtn.addEventListener("click", () => {
   els.emojiPicker.classList.toggle("hidden");
