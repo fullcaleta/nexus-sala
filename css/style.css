@@ -237,6 +237,16 @@ body {
   white-space: nowrap;
 }
 
+.member-name.clickable {
+  cursor: pointer;
+}
+
+.member-name.clickable:hover {
+  color: var(--neon-magenta);
+  text-decoration: underline;
+  text-decoration-color: rgba(176, 38, 255, 0.5);
+}
+
 .btn-kick {
   flex-shrink: 0;
   width: 22px;
@@ -502,6 +512,62 @@ body {
   border-bottom: 1px solid var(--border-glass);
 }
 
+.chat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+
+.chat-tab {
+  position: relative;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-glass);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.chat-tab:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
+}
+
+.chat-tab.active {
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.2), rgba(176, 38, 255, 0.2));
+  border-color: rgba(0, 240, 255, 0.45);
+  color: var(--text-primary);
+}
+
+/* Pestaña especial del moderador: ve todas las privadas de la sala, no
+   solo las suyas -- se distingue con un acento propio (ambar) para que
+   quede claro que es distinta a un DM normal. */
+.chat-tab.mod-all-tab {
+  border-color: rgba(255, 193, 7, 0.35);
+}
+
+.chat-tab.mod-all-tab.active {
+  background: linear-gradient(90deg, rgba(255, 193, 7, 0.22), rgba(176, 38, 255, 0.2));
+  border-color: rgba(255, 193, 7, 0.55);
+}
+
+.chat-tab.unread::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neon-magenta);
+  box-shadow: 0 0 6px rgba(176, 38, 255, 0.8);
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -528,6 +594,18 @@ body {
   border: 1px solid rgba(0, 240, 255, 0.15);
 }
 
+/* Mensaje privado: mismo formato que uno normal, con un acento magenta en
+   vez de cian para que se note de un vistazo que no es del chat general. */
+.chat-message.dm {
+  background: rgba(176, 38, 255, 0.07);
+  border: 1px solid rgba(176, 38, 255, 0.2);
+}
+
+.chat-message.dm.own {
+  background: rgba(176, 38, 255, 0.13);
+  border-color: rgba(176, 38, 255, 0.3);
+}
+
 .chat-author {
   font-size: 0.75rem;
   font-weight: 700;
@@ -535,8 +613,27 @@ body {
   letter-spacing: 0.5px;
 }
 
+.chat-message.dm .chat-author {
+  color: var(--neon-magenta);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-message.dm .chat-author::before {
+  content: "🔒";
+  font-size: 0.7rem;
+}
+
 .chat-text {
   color: var(--text-primary);
+}
+
+.empty-thread-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 24px 12px;
 }
 
 .chat-form {
