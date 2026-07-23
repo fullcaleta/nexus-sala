@@ -14,3 +14,8 @@ docker/
 # Guia operativa interna (comandos, migracion a otro servidor): no aporta
 # nada a quien solo mira el codigo publico.
 COMO-MANEJAR-EL-SERVIDOR.md
+
+# Manual completo (arquitectura, puertos, codigo explicado en detalle): igual
+# que ESTADO-DEL-PROYECTO.md, util para el dueño del proyecto pero no para
+# publicar en un repositorio abierto.
+MANUAL-NEXUS-COMPLETO.md
