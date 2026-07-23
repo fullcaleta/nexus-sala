@@ -1,4 +1,4 @@
-import { connect, on, sendChat, sendDm, sendGif, sendGifDm, kickUser, disconnect } from "./realtime.js";
+import { connect, on, sendChat, sendDm, sendGif, sendGifDm, kickUser, disconnect } from "./realtime.js?v=2";
 import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -520,7 +520,10 @@ async function joinRoom() {
       els.joinError.textContent = `Conectando... (intento ${attempt} de ${total})`;
     });
   } catch (err) {
-    els.joinError.textContent = "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
+    els.joinError.textContent =
+      err.code === "name-taken"
+        ? "Ese nombre ya lo está usando alguien en la sala. Elige otro."
+        : "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
     return;
   }
   els.joinError.textContent = "";

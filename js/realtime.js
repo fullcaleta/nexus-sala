@@ -68,6 +68,14 @@ function attemptConnect(userId, name, modKey) {
         clearTimeout(timeout);
         ws = socket;
         resolve(msg);
+      } else if (msg.type === "name-taken" && !settled) {
+        // No tiene sentido reintentar con el mismo nombre: es un rechazo
+        // definitivo, no una falla de conexion pasajera.
+        settled = true;
+        clearTimeout(timeout);
+        const err = new Error("name-taken");
+        err.code = "name-taken";
+        reject(err);
       }
       emit(msg.type, msg);
     };
@@ -98,6 +106,9 @@ export async function connect(userId, name, modKey, onRetry) {
     try {
       return await attemptConnect(userId, name, modKey);
     } catch (err) {
+      // Reintentar con el mismo nombre no sirve de nada: el servidor lo va
+      // a rechazar de nuevo, siempre por el mismo motivo.
+      if (err.code === "name-taken") throw err;
       if (attempt >= MAX_ATTEMPTS) {
         throw new Error("No se pudo conectar al servidor de la sala.");
       }
