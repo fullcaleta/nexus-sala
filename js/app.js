@@ -153,7 +153,7 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   fullscreenBtn.type = "button";
   fullscreenBtn.title = "Ver en pantalla completa";
   fullscreenBtn.textContent = "⛶";
-  fullscreenBtn.addEventListener("click", () => enterFullscreen(video));
+  fullscreenBtn.addEventListener("click", () => enterFullscreen(tile, video));
 
   tile.appendChild(video);
   tile.appendChild(label);
@@ -207,11 +207,23 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 // cualquier elemento: hay que pedirlo directo sobre el <video> con su
 // propio metodo. Se prueban los tres en orden segun lo que soporte cada
 // navegador.
-function enterFullscreen(videoEl) {
-  if (videoEl.requestFullscreen) {
-    videoEl.requestFullscreen();
-  } else if (videoEl.webkitRequestFullscreen) {
-    videoEl.webkitRequestFullscreen();
+// Se pide pantalla completa sobre el RECUADRO entero (tileEl), no sobre el
+// <video> directamente: cuando un <video> entra en pantalla completa por si
+// solo, varios navegadores (Chrome sobre todo) le agregan sus propios
+// controles nativos encima, incluido un control de volumen que no tiene
+// ninguna conexion con el nuestro (el audio real pasa por Web Audio API,
+// no por el volumen nativo del <video>) y por eso no hacia nada. Poniendo
+// en pantalla completa el contenedor en vez del video evita que el
+// navegador agregue esos controles. El unico caso que sigue necesitando el
+// <video> directamente es el metodo propio de iOS/Safari viejo
+// (webkitEnterFullscreen), que no funciona sobre un div generico -- ahi no
+// hay forma de evitar los controles nativos del sistema, es una limitacion
+// de esa plataforma.
+function enterFullscreen(tileEl, videoEl) {
+  if (tileEl.requestFullscreen) {
+    tileEl.requestFullscreen();
+  } else if (tileEl.webkitRequestFullscreen) {
+    tileEl.webkitRequestFullscreen();
   } else if (videoEl.webkitEnterFullscreen) {
     videoEl.webkitEnterFullscreen();
   }
