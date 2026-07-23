@@ -1,4 +1,4 @@
-import { connect, on, sendChat, sendDm, kickUser, disconnect } from "./realtime.js";
+import { connect, on, sendChat, sendDm, sendGif, sendGifDm, kickUser, disconnect } from "./realtime.js";
 import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -19,6 +19,8 @@ const els = {
   emojiPicker: document.getElementById("emoji-picker"),
   emojiTabs: document.getElementById("emoji-tabs"),
   emojiGrid: document.getElementById("emoji-grid"),
+  gifBtn: document.getElementById("gif-btn"),
+  gifPicker: document.getElementById("gif-picker"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
@@ -317,6 +319,24 @@ function appendMessageBubble(html, isOwn, extraClass = "") {
   wrapper.innerHTML = html;
   els.chatMessages.appendChild(wrapper);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  return wrapper;
+}
+
+// El nombre del archivo viene de otro usuario: se arma el <img> con
+// createElement/.src (nunca interpolado en un string de HTML) para que no
+// haya forma de que un nombre de archivo raro termine inyectando HTML.
+function appendGifBubble(name, filename, isOwn) {
+  const wrapper = appendMessageBubble(
+    `<span class="chat-author">${escapeHtml(name)}</span>`,
+    isOwn,
+    "gif"
+  );
+  const img = document.createElement("img");
+  img.src = `gifs/${encodeURIComponent(filename)}`;
+  img.alt = filename;
+  img.loading = "lazy";
+  wrapper.appendChild(img);
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
 }
 
 function renderMessage(entry) {
@@ -325,11 +345,7 @@ function renderMessage(entry) {
     if (entry.userId !== userId) markThreadUnread("general");
     return;
   }
-  const { name, text, userId: authorId } = entry;
-  appendMessageBubble(
-    `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(text)}</span>`,
-    authorId === userId
-  );
+  renderMessageBubbleOnly(entry);
 }
 
 // showBothNames se usa en la pestaña del moderador que ve TODOS los
@@ -340,6 +356,16 @@ function renderDmMessage(entry, { showBothNames = false } = {}) {
   const authorLabel = showBothNames
     ? `${escapeHtml(entry.fromName)} → ${escapeHtml(entry.toName)}`
     : escapeHtml(isOwn ? "Tú" : entry.fromName);
+  if (entry.filename) {
+    const wrapper = appendMessageBubble(`<span class="chat-author">${authorLabel}</span>`, isOwn, "dm gif");
+    const img = document.createElement("img");
+    img.src = `gifs/${encodeURIComponent(entry.filename)}`;
+    img.alt = entry.filename;
+    img.loading = "lazy";
+    wrapper.appendChild(img);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    return;
+  }
   appendMessageBubble(
     `<span class="chat-author">${authorLabel}</span><span class="chat-text">${escapeHtml(entry.text)}</span>`,
     isOwn,
@@ -408,14 +434,21 @@ function switchThread(threadId) {
   els.chatInput.disabled = threadId === "mod-all";
   els.chatForm.querySelector(".btn-send").disabled = threadId === "mod-all";
   els.emojiBtn.disabled = threadId === "mod-all";
+  els.gifBtn.disabled = threadId === "mod-all";
 }
 
 // Version de renderMessage que NO vuelve a guardar en generalMessages (ya
 // esta ahi): se usa solo al re-dibujar la pestaña "general" desde el buffer.
-function renderMessageBubbleOnly({ name, text, userId: authorId }) {
+function renderMessageBubbleOnly(entry) {
+  const { name, text, filename, userId: authorId } = entry;
+  const isOwn = authorId === userId;
+  if (filename) {
+    appendGifBubble(name, filename, isOwn);
+    return;
+  }
   appendMessageBubble(
     `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(text)}</span>`,
-    authorId === userId
+    isOwn
   );
 }
 
@@ -565,6 +598,11 @@ async function joinRoom() {
     if (msg.userId !== userId) notify(msg.name, msg.text, "nexus-chat");
   });
 
+  addRoomListener("gif", (msg) => {
+    renderMessage(msg);
+    if (msg.userId !== userId) notify(msg.name, "Envió un GIF", "nexus-chat");
+  });
+
   // El servidor borra el historial de chat cada 8 minutos: se limpia
   // tambien la pantalla de quien ya esta conectado, no solo la de quien
   // entra despues (que ya no recibe nada viejo en el mensaje de bienvenida).
@@ -577,7 +615,8 @@ async function joinRoom() {
   // Mensajes privados: los propios (donde soy remitente o destinatario) van
   // a su propia pestaña 1 a 1; si soy moderador, ademas veo cualquier
   // privado ajeno en la pestaña especial "Privados (todos)".
-  addRoomListener("dm", (msg) => {
+  function handleIncomingDm(msg) {
+    const notifyText = msg.filename ? "Te mandó un GIF" : msg.text;
     const isMine = msg.from === userId || msg.to === userId;
     if (isMine) {
       const otherId = msg.from === userId ? msg.to : msg.from;
@@ -590,7 +629,7 @@ async function joinRoom() {
         renderDmMessage(msg);
       } else {
         markThreadUnread(otherId);
-        if (msg.from !== userId) notify(`${msg.fromName} (privado)`, msg.text, "nexus-dm-" + otherId);
+        if (msg.from !== userId) notify(`${msg.fromName} (privado)`, notifyText, "nexus-dm-" + otherId);
       }
     }
     if (isModerator && msg.from !== userId && msg.to !== userId) {
@@ -602,7 +641,10 @@ async function joinRoom() {
         markThreadUnread("mod-all");
       }
     }
-  });
+  }
+
+  addRoomListener("dm", handleIncomingDm);
+  addRoomListener("gif-dm", handleIncomingDm);
 
   addRoomListener("kicked", () => {
     alert("Fuiste expulsado de la sala por un moderador.");
@@ -649,6 +691,9 @@ function cleanupAndReturnToJoinScreen() {
   els.emojiBtn.disabled = false;
   els.emojiPicker.classList.add("hidden");
   els.emojiBtn.classList.remove("active");
+  els.gifBtn.disabled = false;
+  els.gifPicker.classList.add("hidden");
+  els.gifBtn.classList.remove("active");
   micOn = false;
   camOn = false;
   screenShareActive = false;
@@ -800,6 +845,71 @@ document.addEventListener("click", (e) => {
   if (els.emojiPicker.contains(e.target) || e.target === els.emojiBtn) return;
   els.emojiPicker.classList.add("hidden");
   els.emojiBtn.classList.remove("active");
+});
+
+// Selector de GIFs. Los archivos viven en la carpeta gifs/ del proyecto
+// (se suben al repositorio igual que el resto del frontend); como es un
+// sitio estatico sin servidor propio, no hay forma de listar esa carpeta
+// sola -- cada vez que se agregue un gif nuevo hay que sumar su nombre
+// aca a mano.
+const GIF_FILES = [
+  "Cruz Azul Cheer GIF by Club America.gif",
+  "Dragon Ball Super Broly GIF.gif",
+  "Marijuana Pounds GIF by Exclusive Michigan.gif",
+  "weed GIF.gif",
+];
+
+// El limite real (3 cada 5 min) lo aplica el servidor; esto es solo un
+// espejo del lado del cliente para avisar antes de mandar de mas, en vez
+// de que el mensaje se pierda en silencio sin ninguna explicacion.
+const GIF_RATE_LIMIT_MAX = 3;
+const GIF_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+let myGifSendTimes = [];
+
+if (GIF_FILES.length === 0) {
+  els.gifPicker.innerHTML = '<p class="empty-hint">Todavía no hay GIFs cargados.</p>';
+} else {
+  for (const filename of GIF_FILES) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = filename.replace(/\.gif$/i, "");
+    const img = document.createElement("img");
+    img.src = `gifs/${encodeURIComponent(filename)}`;
+    img.alt = filename;
+    img.loading = "lazy";
+    btn.appendChild(img);
+    btn.addEventListener("click", () => {
+      const now = Date.now();
+      myGifSendTimes = myGifSendTimes.filter((t) => now - t < GIF_RATE_LIMIT_WINDOW_MS);
+      if (myGifSendTimes.length >= GIF_RATE_LIMIT_MAX) {
+        const waitMs = GIF_RATE_LIMIT_WINDOW_MS - (now - myGifSendTimes[0]);
+        const waitMin = Math.ceil(waitMs / 60000);
+        alert(`Ya mandaste ${GIF_RATE_LIMIT_MAX} GIFs. Esperá ${waitMin} minuto${waitMin === 1 ? "" : "s"} para mandar otro.`);
+        return;
+      }
+      myGifSendTimes.push(now);
+      if (activeThread === "general") {
+        sendGif(filename);
+      } else if (activeThread !== "mod-all") {
+        sendGifDm(activeThread, filename);
+      }
+      els.gifPicker.classList.add("hidden");
+      els.gifBtn.classList.remove("active");
+    });
+    els.gifPicker.appendChild(btn);
+  }
+}
+
+els.gifBtn.addEventListener("click", () => {
+  els.gifPicker.classList.toggle("hidden");
+  els.gifBtn.classList.toggle("active");
+});
+
+document.addEventListener("click", (e) => {
+  if (els.gifPicker.classList.contains("hidden")) return;
+  if (els.gifPicker.contains(e.target) || e.target === els.gifBtn) return;
+  els.gifPicker.classList.add("hidden");
+  els.gifBtn.classList.remove("active");
 });
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
