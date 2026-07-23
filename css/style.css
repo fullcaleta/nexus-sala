@@ -348,16 +348,33 @@ body {
   background: #0d0c16;
 }
 
-/* Dentro del recuadro chico, "cover" recorta los bordes para llenar el
-   marco (se ve bien con una cara). En pantalla completa eso corta contenido
-   real (por ejemplo el borde de una pantalla compartida): ahi se muestra
-   todo sin recortar, con franjas negras si hace falta. */
-.video-tile video:fullscreen,
-.video-tile video:-webkit-full-screen {
-  object-fit: contain;
-  width: 100%;
-  height: 100%;
+/* La pantalla completa se pide sobre el recuadro entero (ver enterFullscreen
+   en app.js), no sobre el <video> solo -- asi el navegador no le agrega sus
+   propios controles nativos encima (con un volumen que no tiene conexion
+   con el nuestro). Dentro del recuadro chico, "cover" recorta los bordes
+   para llenar el marco (se ve bien con una cara); en pantalla completa eso
+   cortaria contenido real (por ejemplo el borde de una pantalla
+   compartida), asi que ahi se muestra todo sin recortar. La etiqueta con el
+   nombre y el control de volumen propio se siguen viendo encima, ahora
+   utilizables tambien en pantalla completa. */
+.video-tile:fullscreen,
+.video-tile:-webkit-full-screen {
   background: #000;
+  border-radius: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+.video-tile:fullscreen video,
+.video-tile:-webkit-full-screen video {
+  object-fit: contain;
+}
+
+/* El propio boton de pantalla completa no tiene sentido mientras ya se esta
+   viendo en pantalla completa (no hay forma de "re-entrar"). */
+.video-tile:fullscreen .video-tile-fullscreen-btn,
+.video-tile:-webkit-full-screen .video-tile-fullscreen-btn {
+  display: none;
 }
 
 /* Efecto espejo solo para tu propia vista previa (como te ves al mirarte a
