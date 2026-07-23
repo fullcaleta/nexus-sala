@@ -142,7 +142,21 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   const video = document.createElement("video");
   video.autoplay = true;
   video.playsInline = true;
+  video.controls = false;
   if (isLocal) video.muted = true;
+  if (!isLocal) {
+    // El audio real de los recuadros ajenos sale por Web Audio API (ver
+    // _connectVolumeControl mas abajo), nunca por el propio <video>, que
+    // queda silenciado a proposito. Algunos controles nativos del sistema
+    // (sobre todo en celular) pueden intentar "desmutearlo" igual; esto lo
+    // vuelve a silenciar al instante si eso pasa, para que nunca se
+    // escuche el audio dos veces (uno real por nuestro control, otro sin
+    // control ninguno por el <video> nativo).
+    video.muted = true;
+    video.addEventListener("volumechange", () => {
+      if (!video.muted) video.muted = true;
+    });
+  }
 
   const label = document.createElement("span");
   label.className = "video-tile-label";
@@ -195,7 +209,6 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       gainNode = ctx.createGain();
       gainNode.gain.value = Number(volumeControl.value);
       source.connect(gainNode).connect(ctx.destination);
-      video.muted = true;
     };
   }
 
