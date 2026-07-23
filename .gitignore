@@ -10,3 +10,7 @@ ESTADO-DEL-PROYECTO.md
 # deben quedar en un repositorio publico.
 server/
 docker/
+
+# Guia operativa interna (comandos, migracion a otro servidor): no aporta
+# nada a quien solo mira el codigo publico.
+COMO-MANEJAR-EL-SERVIDOR.md

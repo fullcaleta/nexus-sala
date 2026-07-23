@@ -1,4 +1,4 @@
-import { connect, on, sendChat, kickUser, disconnect } from "./realtime.js";
+import { connect, on, sendChat, sendDm, kickUser, disconnect } from "./realtime.js";
 import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -24,6 +24,7 @@ const els = {
   toggleVideosBtn: document.getElementById("toggle-videos-btn"),
   toggleVideosLabel: document.getElementById("toggle-videos-label"),
   notifyBtn: document.getElementById("notify-btn"),
+  chatTabs: document.getElementById("chat-tabs"),
 };
 
 function generateId() {
@@ -59,6 +60,18 @@ function getSharedAudioContext() {
   if (sharedAudioContext.state === "suspended") sharedAudioContext.resume();
   return sharedAudioContext;
 }
+
+// Sonido de aviso al recibir un mensaje privado. Se crea y se "activa" con
+// un play/pause silencioso dentro del propio clic de "Entrar a la Sala" (ver
+// joinForm): igual que el AudioContext de arriba, en iOS/Safari un audio
+// reproducido fuera de un gesto directo del usuario queda bloqueado para
+// siempre si no se lo desbloquea asi primero.
+let dmSound = null;
+function playDmSound() {
+  if (!dmSound) return;
+  dmSound.currentTime = 0;
+  dmSound.play().catch(() => {});
+}
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
 let micOn = false;
@@ -74,6 +87,14 @@ let micGainNode = null; // controla en vivo cuanto del microfono entra a la mezc
 let notificationsEnabled = false;
 const knownMembers = new Map(); // peerId -> { name, hidden }
 const roomListeners = []; // funciones para darse de baja al salir de la sala
+
+// Mensajes privados: cada pestaña del chat (aparte de "general") es una
+// conversacion 1 a 1, guardada aca del lado del cliente (el servidor no
+// guarda historial de privados, solo los reenvia en el momento).
+let activeThread = "general"; // "general" | "mod-all" | peerId de un DM
+const generalMessages = []; // buffer local del chat publico, para poder re-renderizar al volver a esta pestaña
+const dmThreads = new Map(); // peerId -> [{from, fromName, to, toName, text, at}]
+const allPrivateLog = []; // solo para el moderador: TODOS los privados de la sala, en orden
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -203,6 +224,12 @@ function renderMemberList() {
     li.innerHTML = `<span class="status-dot"></span><span class="member-name">${escapeHtml(info.name)}${
       id === userId ? " <em>(tú)</em>" : ""
     }</span>`;
+    if (id !== userId) {
+      const nameEl = li.querySelector(".member-name");
+      nameEl.classList.add("clickable");
+      nameEl.title = `Enviar mensaje privado a ${info.name}`;
+      nameEl.addEventListener("click", () => openDmWith(id, info.name));
+    }
     if (isModerator && id !== userId) {
       const kickBtn = document.createElement("button");
       kickBtn.className = "btn-kick";
@@ -220,14 +247,111 @@ function kickMember(peerId, name) {
   kickUser(peerId);
 }
 
-function renderMessage({ name, text, userId: authorId }) {
+function appendMessageBubble(html, isOwn, extraClass = "") {
   const wrapper = document.createElement("div");
-  wrapper.className = "chat-message" + (authorId === userId ? " own" : "");
-  wrapper.innerHTML = `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(
-    text
-  )}</span>`;
+  wrapper.className = "chat-message" + (isOwn ? " own" : "") + (extraClass ? ` ${extraClass}` : "");
+  wrapper.innerHTML = html;
   els.chatMessages.appendChild(wrapper);
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+function renderMessage(entry) {
+  generalMessages.push(entry);
+  if (activeThread !== "general") {
+    if (entry.userId !== userId) markThreadUnread("general");
+    return;
+  }
+  const { name, text, userId: authorId } = entry;
+  appendMessageBubble(
+    `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(text)}</span>`,
+    authorId === userId
+  );
+}
+
+// showBothNames se usa en la pestaña del moderador que ve TODOS los
+// privados de la sala (no solo los propios): ahi hace falta aclarar quien
+// le escribio a quien, algo que no hace falta en una conversacion 1 a 1.
+function renderDmMessage(entry, { showBothNames = false } = {}) {
+  const isOwn = entry.from === userId;
+  const authorLabel = showBothNames
+    ? `${escapeHtml(entry.fromName)} → ${escapeHtml(entry.toName)}`
+    : escapeHtml(isOwn ? "Tú" : entry.fromName);
+  appendMessageBubble(
+    `<span class="chat-author">${authorLabel}</span><span class="chat-text">${escapeHtml(entry.text)}</span>`,
+    isOwn,
+    "dm"
+  );
+}
+
+function markThreadUnread(threadId) {
+  if (threadId === activeThread) return;
+  const tab = els.chatTabs.querySelector(`[data-thread="${CSS.escape(threadId)}"]`);
+  tab?.classList.add("unread");
+}
+
+function ensureDmTab(peerId, name) {
+  if (els.chatTabs.querySelector(`[data-thread="${CSS.escape(peerId)}"]`)) return;
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.className = "chat-tab";
+  tab.dataset.thread = peerId;
+  tab.textContent = name;
+  tab.addEventListener("click", () => switchThread(peerId));
+  els.chatTabs.appendChild(tab);
+}
+
+function ensureModAllTab() {
+  if (els.chatTabs.querySelector('[data-thread="mod-all"]')) return;
+  const tab = document.createElement("button");
+  tab.type = "button";
+  tab.className = "chat-tab mod-all-tab";
+  tab.dataset.thread = "mod-all";
+  tab.title = "Todos los mensajes privados de la sala";
+  tab.textContent = "🔒 Privados (todos)";
+  tab.addEventListener("click", () => switchThread("mod-all"));
+  els.chatTabs.appendChild(tab);
+}
+
+function openDmWith(peerId, name) {
+  ensureDmTab(peerId, name);
+  switchThread(peerId);
+}
+
+function switchThread(threadId) {
+  activeThread = threadId;
+  for (const tab of els.chatTabs.querySelectorAll(".chat-tab")) {
+    const isActive = tab.dataset.thread === threadId;
+    tab.classList.toggle("active", isActive);
+    if (isActive) tab.classList.remove("unread");
+  }
+  els.chatMessages.innerHTML = "";
+  if (threadId === "general") {
+    for (const entry of generalMessages) renderMessageBubbleOnly(entry);
+  } else if (threadId === "mod-all") {
+    if (allPrivateLog.length === 0) {
+      els.chatMessages.innerHTML = '<p class="empty-thread-hint">Todavía no hay mensajes privados en la sala.</p>';
+    }
+    for (const entry of allPrivateLog) renderDmMessage(entry, { showBothNames: true });
+  } else {
+    const thread = dmThreads.get(threadId) || [];
+    if (thread.length === 0) {
+      els.chatMessages.innerHTML = '<p class="empty-thread-hint">Escribí el primer mensaje privado.</p>';
+    }
+    for (const entry of thread) renderDmMessage(entry);
+  }
+  els.chatInput.placeholder =
+    threadId === "general" ? "Escribe un mensaje..." : threadId === "mod-all" ? "" : "Mensaje privado...";
+  els.chatInput.disabled = threadId === "mod-all";
+  els.chatForm.querySelector(".btn-send").disabled = threadId === "mod-all";
+}
+
+// Version de renderMessage que NO vuelve a guardar en generalMessages (ya
+// esta ahi): se usa solo al re-dibujar la pestaña "general" desde el buffer.
+function renderMessageBubbleOnly({ name, text, userId: authorId }) {
+  appendMessageBubble(
+    `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(text)}</span>`,
+    authorId === userId
+  );
 }
 
 function updateMicButtonUI() {
@@ -309,6 +433,7 @@ async function joinRoom() {
   for (const member of welcome.members) {
     knownMembers.set(member.userId, { name: member.name, hidden: !!member.hidden });
   }
+  if (isModerator) ensureModAllTab();
 
   localStream = new MediaStream();
   createVideoTile(userId, username, { isLocal: true, isSelf: true });
@@ -378,8 +503,40 @@ async function joinRoom() {
   // El servidor borra el historial de chat cada 8 minutos: se limpia
   // tambien la pantalla de quien ya esta conectado, no solo la de quien
   // entra despues (que ya no recibe nada viejo en el mensaje de bienvenida).
+  // Solo afecta al chat general -- los privados no se borran solos.
   addRoomListener("chat-cleared", () => {
-    els.chatMessages.innerHTML = "";
+    generalMessages.length = 0;
+    if (activeThread === "general") els.chatMessages.innerHTML = "";
+  });
+
+  // Mensajes privados: los propios (donde soy remitente o destinatario) van
+  // a su propia pestaña 1 a 1; si soy moderador, ademas veo cualquier
+  // privado ajeno en la pestaña especial "Privados (todos)".
+  addRoomListener("dm", (msg) => {
+    const isMine = msg.from === userId || msg.to === userId;
+    if (isMine) {
+      const otherId = msg.from === userId ? msg.to : msg.from;
+      const otherName = msg.from === userId ? msg.toName : msg.fromName;
+      if (!dmThreads.has(otherId)) dmThreads.set(otherId, []);
+      dmThreads.get(otherId).push(msg);
+      ensureDmTab(otherId, otherName);
+      if (msg.from !== userId) playDmSound();
+      if (activeThread === otherId) {
+        renderDmMessage(msg);
+      } else {
+        markThreadUnread(otherId);
+        if (msg.from !== userId) notify(`${msg.fromName} (privado)`, msg.text, "nexus-dm-" + otherId);
+      }
+    }
+    if (isModerator && msg.from !== userId && msg.to !== userId) {
+      allPrivateLog.push(msg);
+      ensureModAllTab();
+      if (activeThread === "mod-all") {
+        renderDmMessage(msg, { showBothNames: true });
+      } else {
+        markThreadUnread("mod-all");
+      }
+    }
   });
 
   addRoomListener("kicked", () => {
@@ -412,6 +569,18 @@ function cleanupAndReturnToJoinScreen() {
   els.videoGrid.innerHTML = "";
   els.chatMessages.innerHTML = "";
   knownMembers.clear();
+  generalMessages.length = 0;
+  dmThreads.clear();
+  allPrivateLog.length = 0;
+  activeThread = "general";
+  // saca cualquier pestaña de privado que haya quedado, deja solo "General"
+  for (const tab of [...els.chatTabs.querySelectorAll(".chat-tab")]) {
+    if (tab.dataset.thread !== "general") tab.remove();
+    else tab.classList.add("active");
+  }
+  els.chatInput.disabled = false;
+  els.chatInput.placeholder = "Escribe un mensaje...";
+  els.chatForm.querySelector(".btn-send").disabled = false;
   micOn = false;
   camOn = false;
   screenShareActive = false;
@@ -442,16 +611,32 @@ els.joinForm.addEventListener("submit", async (e) => {
   // gesto directo del usuario queda "suspendido" para siempre y ningun
   // audio suena, aunque el resto de la app funcione bien.
   getSharedAudioContext();
+  // Mismo motivo: se "activa" el sonido de mensaje privado con un
+  // play/pause silencioso dentro de este mismo clic.
+  dmSound = new Audio("sounds/mp.mp3");
+  dmSound.volume = 0.6;
+  dmSound
+    .play()
+    .then(() => dmSound.pause())
+    .catch(() => {});
   await joinRoom();
 });
 
 els.chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = els.chatInput.value.trim();
-  if (!text) return;
+  if (!text || activeThread === "mod-all") return;
   els.chatInput.value = "";
-  sendChat(text.slice(0, 500));
+  if (activeThread === "general") {
+    sendChat(text.slice(0, 500));
+  } else {
+    sendDm(activeThread, text.slice(0, 500));
+  }
 });
+
+// La pestaña "General" ya existe en el HTML desde el arranque (las demas
+// se crean solas al abrir un privado, ver ensureDmTab/ensureModAllTab).
+els.chatTabs.querySelector('[data-thread="general"]').addEventListener("click", () => switchThread("general"));
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 

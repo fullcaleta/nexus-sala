@@ -115,6 +115,10 @@ export function sendChat(text) {
   sendMessage({ type: "chat", text });
 }
 
+export function sendDm(to, text) {
+  sendMessage({ type: "dm", to, text });
+}
+
 export function sendSignal(to, signalType, payload) {
   sendMessage({ type: "signal", to, signalType, payload });
 }
