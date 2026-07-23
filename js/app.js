@@ -61,16 +61,24 @@ function getSharedAudioContext() {
   return sharedAudioContext;
 }
 
-// Sonido de aviso al recibir un mensaje privado. Se crea y se "activa" con
-// un play/pause silencioso dentro del propio clic de "Entrar a la Sala" (ver
-// joinForm): igual que el AudioContext de arriba, en iOS/Safari un audio
-// reproducido fuera de un gesto directo del usuario queda bloqueado para
-// siempre si no se lo desbloquea asi primero.
-let dmSound = null;
+// Sonido de aviso al recibir un mensaje privado. Se usan varios reproductores
+// en vez de uno solo: en iOS, reiniciar (currentTime = 0) el mismo <audio>
+// mientras todavia esta sonando puede hacer que la reproduccion se pise y no
+// se escuche nada si llega otro mensaje antes de que termine el anterior.
+// Con varios, cada mensaje usa uno libre por turno, sin pisarse. Todos se
+// crean y se "activan" con un play/pause silencioso dentro del propio clic
+// de "Entrar a la Sala" (ver joinForm): en iOS/Safari un audio reproducido
+// fuera de un gesto directo del usuario queda bloqueado para siempre si no
+// se lo desbloquea asi primero.
+const DM_SOUND_POOL_SIZE = 4;
+let dmSoundPool = [];
+let dmSoundPoolIndex = 0;
 function playDmSound() {
-  if (!dmSound) return;
-  dmSound.currentTime = 0;
-  dmSound.play().catch(() => {});
+  if (dmSoundPool.length === 0) return;
+  const player = dmSoundPool[dmSoundPoolIndex];
+  dmSoundPoolIndex = (dmSoundPoolIndex + 1) % dmSoundPool.length;
+  player.currentTime = 0;
+  player.play().catch(() => {});
 }
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
@@ -611,14 +619,14 @@ els.joinForm.addEventListener("submit", async (e) => {
   // gesto directo del usuario queda "suspendido" para siempre y ningun
   // audio suena, aunque el resto de la app funcione bien.
   getSharedAudioContext();
-  // Mismo motivo: se "activa" el sonido de mensaje privado con un
-  // play/pause silencioso dentro de este mismo clic.
-  dmSound = new Audio("sounds/mp.mp3");
-  dmSound.volume = 0.6;
-  dmSound
-    .play()
-    .then(() => dmSound.pause())
-    .catch(() => {});
+  // Mismo motivo: se "activan" los reproductores del sonido de mensaje
+  // privado con un play/pause silencioso dentro de este mismo clic.
+  dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
+    const player = new Audio("sounds/mp.mp3");
+    player.volume = 0.6;
+    player.play().then(() => player.pause()).catch(() => {});
+    return player;
+  });
   await joinRoom();
 });
 
