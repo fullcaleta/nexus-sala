@@ -520,6 +520,9 @@ body {
 }
 
 .chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 16px 18px;
   font-family: var(--font-display);
   font-size: 0.95rem;
@@ -527,6 +530,32 @@ body {
   color: var(--neon-magenta);
   text-shadow: 0 0 12px rgba(176, 38, 255, 0.45);
   border-bottom: 1px solid var(--border-glass);
+}
+
+.expand-chat-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-shadow: none;
+  transition: background 0.15s ease;
+}
+
+.expand-chat-btn:hover,
+.expand-chat-btn.active {
+  background: rgba(0, 240, 255, 0.15);
+}
+
+/* Agranda la columna del chat a costa de la grilla de video (que se
+   achica sola, es "1fr"), sin tocar la lista de miembros. */
+.room-screen.chat-expanded {
+  grid-template-columns: 240px 1fr 560px;
+  transition: grid-template-columns 0.2s ease;
 }
 
 .chat-tabs {
@@ -854,5 +883,11 @@ body {
   }
   .chat-panel {
     max-height: 320px;
+    transition: max-height 0.2s ease;
+  }
+  /* En celular no hay una columna que agrandar (ya esta todo apilado a lo
+     ancho): el boton agranda el alto del panel en su lugar. */
+  .chat-panel.chat-expanded {
+    max-height: 70vh;
   }
 }

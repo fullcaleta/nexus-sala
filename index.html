@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=10" />
+  <link rel="stylesheet" href="css/style.css?v=11" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -82,8 +82,11 @@
       </div>
     </section>
 
-    <aside class="chat-panel glass-panel">
-      <div class="chat-header">Chat de la sala</div>
+    <aside id="chat-panel" class="chat-panel glass-panel">
+      <div class="chat-header">
+        <span>Chat de la sala</span>
+        <button type="button" id="expand-chat-btn" class="expand-chat-btn" title="Agrandar el chat">⤢</button>
+      </div>
       <div id="chat-tabs" class="chat-tabs">
         <button type="button" class="chat-tab active" data-thread="general">General</button>
       </div>
@@ -102,6 +105,6 @@
     </aside>
   </div>
 
-  <script type="module" src="js/app.js?v=24"></script>
+  <script type="module" src="js/app.js?v=25"></script>
 </body>
 </html>
