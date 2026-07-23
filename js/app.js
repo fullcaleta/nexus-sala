@@ -6,6 +6,8 @@ const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || 
 const els = {
   joinScreen: document.getElementById("join-screen"),
   roomScreen: document.getElementById("room-screen"),
+  chatPanel: document.getElementById("chat-panel"),
+  expandChatBtn: document.getElementById("expand-chat-btn"),
   joinForm: document.getElementById("join-form"),
   usernameInput: document.getElementById("username-input"),
   joinError: document.getElementById("join-error"),
@@ -233,6 +235,15 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       if (gainNode) return; // ya conectado, no se puede conectar dos veces
       const stream = video.srcObject;
       if (!stream) return;
+      // El video y el audio de la misma persona no siempre llegan en el
+      // mismo momento: si todavia no hay ninguna pista de audio en la
+      // transmision, createMediaStreamSource tira error. Se espera a que
+      // llegue (evento "addtrack" de la propia MediaStream) en vez de
+      // fallar -- el video ya se ve igual, esto solo es para el audio.
+      if (stream.getAudioTracks().length === 0) {
+        stream.addEventListener("addtrack", () => video._connectVolumeControl(), { once: true });
+        return;
+      }
       const ctx = getSharedAudioContext();
       // Se toma el audio directo de la transmision (createMediaStreamSource),
       // no "por dentro" del <video> (createMediaElementSource): en iOS/Safari
@@ -697,6 +708,10 @@ function cleanupAndReturnToJoinScreen() {
   els.gifBtn.disabled = false;
   els.gifPicker.classList.add("hidden");
   els.gifBtn.classList.remove("active");
+  els.roomScreen.classList.remove("chat-expanded");
+  els.chatPanel.classList.remove("chat-expanded");
+  els.expandChatBtn.classList.remove("active");
+  els.expandChatBtn.title = "Agrandar el chat";
   micOn = false;
   camOn = false;
   screenShareActive = false;
@@ -927,6 +942,17 @@ document.addEventListener("click", (e) => {
 });
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
+
+// En PC agranda la columna del chat (a costa de la grilla de video, que se
+// achica sola); en celular (donde todo esta apilado a lo ancho) agranda el
+// alto del panel en su lugar. La misma clase sirve para los dos casos,
+// cada breakpoint la interpreta distinto (ver style.css).
+els.expandChatBtn.addEventListener("click", () => {
+  const expanded = els.roomScreen.classList.toggle("chat-expanded");
+  els.chatPanel.classList.toggle("chat-expanded", expanded);
+  els.expandChatBtn.classList.toggle("active", expanded);
+  els.expandChatBtn.title = expanded ? "Achicar el chat" : "Agrandar el chat";
+});
 
 // El track original de localStream nunca se apaga: los botones solo controlan
 // la copia que reciben los demas participantes (ver webrtc.js setTrackEnabled).
