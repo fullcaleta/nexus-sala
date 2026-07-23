@@ -154,7 +154,12 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   fullscreenBtn.type = "button";
   fullscreenBtn.title = "Ver en pantalla completa";
   fullscreenBtn.textContent = "⛶";
-  fullscreenBtn.addEventListener("click", () => enterFullscreen(tile, video));
+  fullscreenBtn.addEventListener("click", () => {
+    // Adelantado al propio clic (ver donde se define mas abajo): en iOS,
+    // desmutear por codigo solo funciona bien dentro del toque directo.
+    video._handoffToNativeFullscreenAudio?.();
+    enterFullscreen(tile, video);
+  });
 
   tile.appendChild(video);
   tile.appendChild(label);
@@ -190,14 +195,23 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // boton nativo si mutea/desmutea de verdad. Al salir de esa pantalla
     // completa se vuelve a nuestro control de siempre.
     let inNativeFullscreen = false;
-    video.addEventListener("volumechange", () => {
-      if (!inNativeFullscreen && !video.muted) video.muted = true;
-    });
-    video.addEventListener("webkitbeginfullscreen", () => {
+    // Se expone para poder llamarla synchronicamente desde el propio clic
+    // del boton de pantalla completa (ver mas abajo): en iOS, desmutear un
+    // <video> por codigo solo funciona bien si pasa dentro del toque
+    // directo del usuario, no un instante despues cuando recien avisa el
+    // evento "ya entre a pantalla completa" -- por eso esta misma funcion
+    // se llama en los dos momentos (el clic, como adelanto, y el evento,
+    // como respaldo si por algo no se pudo antes).
+    video._handoffToNativeFullscreenAudio = () => {
+      if (inNativeFullscreen) return;
       inNativeFullscreen = true;
       video.muted = false;
       if (gainNode) gainNode.gain.value = 0;
+    };
+    video.addEventListener("volumechange", () => {
+      if (!inNativeFullscreen && !video.muted) video.muted = true;
     });
+    video.addEventListener("webkitbeginfullscreen", video._handoffToNativeFullscreenAudio);
     video.addEventListener("webkitendfullscreen", () => {
       inNativeFullscreen = false;
       video.muted = true;
