@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=6" />
+  <link rel="stylesheet" href="css/style.css?v=7" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -88,13 +88,15 @@
         <button type="button" class="chat-tab active" data-thread="general">General</button>
       </div>
       <div id="chat-messages" class="chat-messages"></div>
+      <div id="emoji-picker" class="emoji-picker hidden"></div>
       <form id="chat-form" class="chat-form">
+        <button type="button" id="emoji-btn" class="btn btn-icon-small" title="Insertar un emoji">😊</button>
         <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="500" autocomplete="off" />
         <button type="submit" class="btn btn-send">➤</button>
       </form>
     </aside>
   </div>
 
-  <script type="module" src="js/app.js?v=19"></script>
+  <script type="module" src="js/app.js?v=20"></script>
 </body>
 </html>
