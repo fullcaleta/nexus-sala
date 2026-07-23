@@ -708,7 +708,6 @@ function cleanupAndReturnToJoinScreen() {
   els.gifBtn.disabled = false;
   els.gifPicker.classList.add("hidden");
   els.gifBtn.classList.remove("active");
-  els.roomScreen.classList.remove("chat-expanded");
   els.chatPanel.classList.remove("chat-expanded");
   els.expandChatBtn.classList.remove("active");
   els.expandChatBtn.title = "Agrandar el chat";
@@ -948,8 +947,7 @@ els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 // alto del panel en su lugar. La misma clase sirve para los dos casos,
 // cada breakpoint la interpreta distinto (ver style.css).
 els.expandChatBtn.addEventListener("click", () => {
-  const expanded = els.roomScreen.classList.toggle("chat-expanded");
-  els.chatPanel.classList.toggle("chat-expanded", expanded);
+  const expanded = els.chatPanel.classList.toggle("chat-expanded");
   els.expandChatBtn.classList.toggle("active", expanded);
   els.expandChatBtn.title = expanded ? "Achicar el chat" : "Agrandar el chat";
 });

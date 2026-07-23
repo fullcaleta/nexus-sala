@@ -551,11 +551,18 @@ body {
   background: rgba(0, 240, 255, 0.15);
 }
 
-/* Agranda la columna del chat a costa de la grilla de video (que se
-   achica sola, es "1fr"), sin tocar la lista de miembros. */
-.room-screen.chat-expanded {
-  grid-template-columns: 240px 1fr 560px;
-  transition: grid-template-columns 0.2s ease;
+/* Crece solo hacia arriba, manteniendo su mismo lugar y ancho de siempre
+   (no invade el margen ni empuja el resto de la pantalla): se saca del
+   flujo normal de la grilla y queda flotando por encima, anclado donde ya
+   estaba, extendiendose hacia arriba. */
+.chat-panel.chat-expanded {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  bottom: 14px;
+  width: 300px;
+  z-index: 50;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
 
 .chat-tabs {
@@ -885,9 +892,13 @@ body {
     max-height: 320px;
     transition: max-height 0.2s ease;
   }
-  /* En celular no hay una columna que agrandar (ya esta todo apilado a lo
-     ancho): el boton agranda el alto del panel en su lugar. */
+  /* En celular el chat ya ocupa todo el ancho apilado en la pantalla: no
+     hace falta el truco de "flotar por encima" que usa PC (ver mas
+     arriba), alcanza con crecer el alto dentro del flujo normal, asi que
+     se anula esa parte y solo se ajusta el limite de alto. */
   .chat-panel.chat-expanded {
+    position: static;
+    width: auto;
     max-height: 70vh;
   }
 }
