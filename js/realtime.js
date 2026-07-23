@@ -119,6 +119,14 @@ export function sendDm(to, text) {
   sendMessage({ type: "dm", to, text });
 }
 
+export function sendGif(filename) {
+  sendMessage({ type: "gif", filename });
+}
+
+export function sendGifDm(to, filename) {
+  sendMessage({ type: "gif-dm", to, filename });
+}
+
 export function sendSignal(to, signalType, payload) {
   sendMessage({ type: "signal", to, signalType, payload });
 }
