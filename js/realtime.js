@@ -119,7 +119,11 @@ export async function connect(userId, name, modKey, onRetry) {
 }
 
 function sendMessage(data) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  } else {
+    console.warn(`[NEXUS-DEBUG] sendMessage NO enviado (type=${data.type}): ws=${!!ws} readyState=${ws?.readyState}`);
+  }
 }
 
 export function sendChat(text) {
