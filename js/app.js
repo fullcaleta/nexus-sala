@@ -15,6 +15,8 @@ const els = {
   chatMessages: document.getElementById("chat-messages"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
+  emojiBtn: document.getElementById("emoji-btn"),
+  emojiPicker: document.getElementById("emoji-picker"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
@@ -403,6 +405,7 @@ function switchThread(threadId) {
     threadId === "general" ? "Escribe un mensaje..." : threadId === "mod-all" ? "" : "Mensaje privado...";
   els.chatInput.disabled = threadId === "mod-all";
   els.chatForm.querySelector(".btn-send").disabled = threadId === "mod-all";
+  els.emojiBtn.disabled = threadId === "mod-all";
 }
 
 // Version de renderMessage que NO vuelve a guardar en generalMessages (ya
@@ -641,6 +644,9 @@ function cleanupAndReturnToJoinScreen() {
   els.chatInput.disabled = false;
   els.chatInput.placeholder = "Escribe un mensaje...";
   els.chatForm.querySelector(".btn-send").disabled = false;
+  els.emojiBtn.disabled = false;
+  els.emojiPicker.classList.add("hidden");
+  els.emojiBtn.classList.remove("active");
   micOn = false;
   camOn = false;
   screenShareActive = false;
@@ -697,6 +703,46 @@ els.chatForm.addEventListener("submit", async (e) => {
 // La pestaña "General" ya existe en el HTML desde el arranque (las demas
 // se crean solas al abrir un privado, ver ensureDmTab/ensureModAllTab).
 els.chatTabs.querySelector('[data-thread="general"]').addEventListener("click", () => switchThread("general"));
+
+// Selector de emojis: lista chica y curada (no una base completa de
+// Unicode), alcanza de sobra para un chat privado de familia/amigos.
+const EMOJI_LIST = [
+  "😀", "😂", "😅", "😊", "😍", "😘", "😜", "🤔",
+  "😎", "😭", "😡", "🥳", "😴", "🤯", "😱", "🥰",
+  "😇", "🤗", "🙄", "😏", "👍", "👎", "👏", "🙏",
+  "💪", "🤝", "👋", "🤙", "👀", "❤️", "💔", "🔥",
+  "✨", "🎉", "🎂", "☕", "🍕", "🍺", "⚽", "🎮",
+  "📷", "🎵", "💤", "💯", "✅", "❌", "⚠️", "🚀",
+];
+for (const emoji of EMOJI_LIST) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = emoji;
+  btn.addEventListener("click", () => {
+    const start = els.chatInput.selectionStart ?? els.chatInput.value.length;
+    const end = els.chatInput.selectionEnd ?? els.chatInput.value.length;
+    const value = els.chatInput.value;
+    els.chatInput.value = value.slice(0, start) + emoji + value.slice(end);
+    const cursor = start + emoji.length;
+    els.chatInput.focus();
+    els.chatInput.setSelectionRange(cursor, cursor);
+  });
+  els.emojiPicker.appendChild(btn);
+}
+
+els.emojiBtn.addEventListener("click", () => {
+  els.emojiPicker.classList.toggle("hidden");
+  els.emojiBtn.classList.toggle("active");
+});
+
+// Cierra el selector al tocar afuera, sin interferir con el propio boton
+// (que ya se encarga de abrir/cerrar) ni con los clics dentro del panel.
+document.addEventListener("click", (e) => {
+  if (els.emojiPicker.classList.contains("hidden")) return;
+  if (els.emojiPicker.contains(e.target) || e.target === els.emojiBtn) return;
+  els.emojiPicker.classList.add("hidden");
+  els.emojiBtn.classList.remove("active");
+});
 
 els.leaveBtn.addEventListener("click", cleanupAndReturnToJoinScreen);
 
