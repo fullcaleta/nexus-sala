@@ -142,9 +142,23 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   // camara frontal, y solo en tu propia vista previa; con la camara trasera
   // (por ejemplo apuntando a un monitor con texto) no hay que espejar nada,
   // ni para vos ni para los demas, o el texto se lee al reves.
+  let switchCamTileBtn = null;
   if (isLocal) {
     tile.classList.add("local-tile");
     tile.classList.toggle("mirrored", facingMode === "user");
+
+    // Mismo cambio de camara que el boton de la barra de controles, pero
+    // puesto directo encima de tu propia vista previa: asi ves el resultado
+    // del cambio en el momento, sin tener que buscar el boton de abajo. Usa
+    // un icono distinto (no el mismo que el de la barra) porque, al quedar
+    // flotando sobre el video, un boton identico ahi se veia feo/confuso.
+    switchCamTileBtn = document.createElement("button");
+    switchCamTileBtn.className = "video-tile-switch-cam-btn";
+    switchCamTileBtn.type = "button";
+    switchCamTileBtn.title = "Cambiar de cámara";
+    switchCamTileBtn.textContent = "⇄";
+    switchCamTileBtn.disabled = els.switchCamBtn.disabled;
+    switchCamTileBtn.addEventListener("click", switchCamera);
   }
 
   const video = document.createElement("video");
@@ -172,6 +186,7 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   tile.appendChild(video);
   tile.appendChild(label);
   tile.appendChild(fullscreenBtn);
+  if (switchCamTileBtn) tile.appendChild(switchCamTileBtn);
 
   // El volumen de cada persona se controla solo del lado de quien escucha,
   // sin tocar nada de la conexion: no tiene sentido para tu propio recuadro
@@ -474,7 +489,11 @@ function updateCamButtonUI() {
   els.toggleCamBtn.title = camOn ? "Apagar cámara" : "Activar cámara";
   els.switchCamBtn.disabled = !localStream.getVideoTracks()[0];
   const localTile = document.getElementById(`tile-${userId}`);
-  if (localTile) localTile.classList.toggle("cam-off-preview", !camOn);
+  if (localTile) {
+    localTile.classList.toggle("cam-off-preview", !camOn);
+    const tileBtn = localTile.querySelector(".video-tile-switch-cam-btn");
+    if (tileBtn) tileBtn.disabled = els.switchCamBtn.disabled;
+  }
 }
 
 // Si el sitio ya tiene el permiso concedido de una sesion anterior, se puede
@@ -1010,7 +1029,10 @@ els.toggleCamBtn.addEventListener("click", async () => {
   updateCamButtonUI();
 });
 
-els.switchCamBtn.addEventListener("click", async () => {
+// Usada tanto por el boton de la barra de controles como por el boton
+// equivalente puesto directo sobre la propia vista previa (ver
+// createVideoTile), asi los dos disparan exactamente el mismo cambio.
+async function switchCamera() {
   const oldTrack = localStream.getVideoTracks()[0];
   if (!oldTrack) return;
   const newFacing = facingMode === "user" ? "environment" : "user";
@@ -1053,7 +1075,9 @@ els.switchCamBtn.addEventListener("click", async () => {
   const reportedFacing = newTrack.getSettings().facingMode;
   facingMode = reportedFacing || newFacing;
   document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
-});
+}
+
+els.switchCamBtn.addEventListener("click", switchCamera);
 
 // Compartir pantalla ocupa el mismo "lugar" que la camara (no se ven las
 // dos a la vez): mientras se comparte, la pantalla reemplaza el video que

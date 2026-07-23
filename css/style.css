@@ -426,6 +426,42 @@ body {
   box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
 }
 
+/* Boton de cambiar de camara puesto directo sobre tu propia vista previa
+   (ver createVideoTile en app.js). Va en la esquina opuesta al de pantalla
+   completa y con otro color de acento para diferenciarse a simple vista,
+   ya que el mismo boton que el de la barra de controles se veia feo/confuso
+   flotando encima del video. */
+.video-tile-switch-cam-btn {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  line-height: 1;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--neon-pink, #ff2ec4);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.video-tile-switch-cam-btn:hover {
+  background: rgba(255, 46, 196, 0.18);
+  box-shadow: 0 0 12px rgba(255, 46, 196, 0.3);
+}
+
+.video-tile-switch-cam-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .video-tile-volume {
   position: absolute;
   right: 8px;
