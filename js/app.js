@@ -722,17 +722,28 @@ els.joinForm.addEventListener("submit", async (e) => {
   // Crear/desbloquear el AudioContext compartido aca, dentro del propio
   // toque del boton: en iOS/Safari un AudioContext creado fuera de un
   // gesto directo del usuario queda "suspendido" para siempre y ningun
-  // audio suena, aunque el resto de la app funcione bien.
-  getSharedAudioContext();
-  // Mismo motivo: se "activan" los reproductores del sonido de mensaje
-  // privado con un play/pause silencioso dentro de este mismo clic.
-  dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
-    const player = new Audio("sounds/mp.mp3");
-    player.volume = 0.6;
-    player.play().then(() => player.pause()).catch(() => {});
-    return player;
-  });
-  await joinRoom();
+  // audio suena, aunque el resto de la app funcione bien. Todo esto es una
+  // mejora de audio, nunca debe poder impedir entrar a la sala si algo
+  // sale mal (por eso va en su propio try/catch, separado de joinRoom).
+  try {
+    getSharedAudioContext();
+    // Mismo motivo: se "activan" los reproductores del sonido de mensaje
+    // privado con un play/pause silencioso dentro de este mismo clic.
+    dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
+      const player = new Audio("sounds/mp.mp3");
+      player.volume = 0.6;
+      player.play().then(() => player.pause()).catch(() => {});
+      return player;
+    });
+  } catch (err) {
+    console.warn("No se pudo preparar el audio de avisos:", err);
+  }
+  try {
+    await joinRoom();
+  } catch (err) {
+    console.error("No se pudo entrar a la sala:", err);
+    els.joinError.textContent = "Algo falló al entrar a la sala. Probá recargar la página e intentar de nuevo.";
+  }
 });
 
 els.chatForm.addEventListener("submit", async (e) => {
