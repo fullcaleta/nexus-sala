@@ -375,6 +375,13 @@ async function joinRoom() {
     if (msg.userId !== userId) notify(msg.name, msg.text, "nexus-chat");
   });
 
+  // El servidor borra el historial de chat cada 8 minutos: se limpia
+  // tambien la pantalla de quien ya esta conectado, no solo la de quien
+  // entra despues (que ya no recibe nada viejo en el mensaje de bienvenida).
+  addRoomListener("chat-cleared", () => {
+    els.chatMessages.innerHTML = "";
+  });
+
   addRoomListener("kicked", () => {
     alert("Fuiste expulsado de la sala por un moderador.");
     cleanupAndReturnToJoinScreen();
