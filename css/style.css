@@ -491,6 +491,62 @@ body {
   width: 64px;
 }
 
+.camera-picker-anchor {
+  position: relative;
+}
+
+/* Lista de camaras disponibles (ver "Elegir camara" en app.js), pensada
+   como complemento del boton de girar/ciclar: ese sigue igual, esto solo
+   agrega la opcion de elegir un dispositivo puntual por su nombre, para no
+   depender de que el ciclado adivine bien cual es la camara real cuando
+   Windows tiene registradas camaras virtuales (por ejemplo Iriun Webcam). */
+.camera-picker {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  max-width: 280px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px;
+  background: rgba(10, 9, 18, 0.95);
+  border: 1px solid var(--border-glass);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+}
+
+.camera-picker-option {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.camera-picker-option:hover {
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.camera-picker-option.active {
+  border-color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.14);
+}
+
+.camera-picker .empty-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 10px 6px;
+}
+
 .control-label {
   font-size: 0.68rem;
   letter-spacing: 0.02em;

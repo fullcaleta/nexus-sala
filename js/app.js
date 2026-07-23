@@ -27,6 +27,8 @@ const els = {
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
   switchCamBtn: document.getElementById("switch-cam-btn"),
+  chooseCamBtn: document.getElementById("choose-cam-btn"),
+  cameraPicker: document.getElementById("camera-picker"),
   shareScreenBtn: document.getElementById("share-screen-btn"),
   shareScreenLabel: document.getElementById("share-screen-label"),
   toggleVideosBtn: document.getElementById("toggle-videos-btn"),
@@ -488,6 +490,7 @@ function updateCamButtonUI() {
   els.toggleCamBtn.textContent = "📷";
   els.toggleCamBtn.title = camOn ? "Apagar cámara" : "Activar cámara";
   els.switchCamBtn.disabled = !localStream.getVideoTracks()[0];
+  els.chooseCamBtn.disabled = !localStream.getVideoTracks()[0];
   const localTile = document.getElementById(`tile-${userId}`);
   if (localTile) {
     localTile.classList.toggle("cam-off-preview", !camOn);
@@ -1029,6 +1032,25 @@ els.toggleCamBtn.addEventListener("click", async () => {
   updateCamButtonUI();
 });
 
+// Parte comun a "girar camara" (cicla a cualquier otra) y "elegir camara"
+// (un dispositivo puntual): reemplaza el track de video que se manda a
+// todos los pares y actualiza la propia vista previa. fallbackFacing solo
+// se usa si el navegador no informa el facingMode real del track nuevo.
+function applyNewVideoTrack(newTrack, fallbackFacing) {
+  const oldTrack = localStream.getVideoTracks()[0];
+  if (oldTrack) {
+    localStream.removeTrack(oldTrack);
+    oldTrack.stop();
+  }
+  localStream.addTrack(newTrack);
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  webrtcManager.replaceLocalVideoTrack(newTrack);
+  const reportedFacing = newTrack.getSettings().facingMode;
+  if (reportedFacing || fallbackFacing) facingMode = reportedFacing || fallbackFacing;
+  document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
+}
+
 // Usada tanto por el boton de la barra de controles como por el boton
 // equivalente puesto directo sobre la propia vista previa (ver
 // createVideoTile), asi los dos disparan exactamente el mismo cambio.
@@ -1063,21 +1085,72 @@ async function switchCamera() {
       return;
     }
   }
-  const newTrack = newStream.getVideoTracks()[0];
-  localStream.removeTrack(oldTrack);
-  oldTrack.stop();
-  localStream.addTrack(newTrack);
-  const localVideoEl = document.querySelector(`#tile-${userId} video`);
-  if (localVideoEl) localVideoEl.srcObject = localStream;
-  webrtcManager.replaceLocalVideoTrack(newTrack);
-  // El navegador suele informar la orientacion real de la camara elegida;
-  // si no la informa, se asume que se alterno a la otra (mejor esfuerzo).
-  const reportedFacing = newTrack.getSettings().facingMode;
-  facingMode = reportedFacing || newFacing;
-  document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
+  applyNewVideoTrack(newStream.getVideoTracks()[0], newFacing);
 }
 
 els.switchCamBtn.addEventListener("click", switchCamera);
+
+// Complementa a "girar camara": deja elegir un dispositivo puntual por
+// nombre, en vez de que el ciclado adivine cual es la camara real. Hace
+// falta sobre todo en PC con camaras virtuales instaladas (por ejemplo
+// Iriun Webcam), donde ciclar puede caer en una que no esta transmitiendo.
+async function switchToCameraDevice(deviceId) {
+  const oldTrack = localStream.getVideoTracks()[0];
+  if (!oldTrack || oldTrack.getSettings().deviceId === deviceId) return;
+  let newStream;
+  try {
+    newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
+  } catch (err) {
+    console.error("[NEXUS-DEBUG] error al elegir camara:", err.name, err.message);
+    alert("No se pudo usar esa cámara.");
+    return;
+  }
+  applyNewVideoTrack(newStream.getVideoTracks()[0]);
+}
+
+async function renderCameraPicker() {
+  els.cameraPicker.innerHTML = '<p class="empty-hint">Buscando cámaras...</p>';
+  let devices;
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch (err) {
+    els.cameraPicker.innerHTML = '<p class="empty-hint">No se pudieron listar las cámaras.</p>';
+    return;
+  }
+  const cameras = devices.filter((d) => d.kind === "videoinput");
+  els.cameraPicker.innerHTML = "";
+  if (cameras.length === 0) {
+    els.cameraPicker.innerHTML = '<p class="empty-hint">No se encontraron cámaras.</p>';
+    return;
+  }
+  const currentId = localStream.getVideoTracks()[0]?.getSettings().deviceId;
+  cameras.forEach((cam, index) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "camera-picker-option" + (cam.deviceId === currentId ? " active" : "");
+    btn.textContent = cam.label || `Cámara ${index + 1}`;
+    btn.addEventListener("click", async () => {
+      await switchToCameraDevice(cam.deviceId);
+      els.cameraPicker.classList.add("hidden");
+      els.chooseCamBtn.classList.remove("active");
+    });
+    els.cameraPicker.appendChild(btn);
+  });
+}
+
+els.chooseCamBtn.addEventListener("click", () => {
+  const opening = els.cameraPicker.classList.contains("hidden");
+  els.cameraPicker.classList.toggle("hidden");
+  els.chooseCamBtn.classList.toggle("active");
+  if (opening) renderCameraPicker();
+});
+
+document.addEventListener("click", (e) => {
+  if (els.cameraPicker.classList.contains("hidden")) return;
+  if (els.cameraPicker.contains(e.target) || e.target === els.chooseCamBtn) return;
+  els.cameraPicker.classList.add("hidden");
+  els.chooseCamBtn.classList.remove("active");
+});
 
 // Compartir pantalla ocupa el mismo "lugar" que la camara (no se ven las
 // dos a la vez): mientras se comparte, la pantalla reemplaza el video que
