@@ -588,17 +588,17 @@ body {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .chat-message {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 10px 14px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
   max-width: 100%;
@@ -796,6 +796,11 @@ body {
 
 .chat-form input {
   flex: 1;
+  /* Sin esto, un input dentro de flex no se achica mas alla de cierto
+     ancho segun su contenido (el minimo por defecto no es 0), y con los
+     botones de emoji/gif/enviar juntos puede empujar el de enviar fuera
+     de la pantalla en dispositivos angostos. */
+  min-width: 0;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border-glass);
   border-radius: 10px;
@@ -812,6 +817,7 @@ body {
 }
 
 .btn-send {
+  flex-shrink: 0;
   width: 42px;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--neon-cyan), var(--neon-magenta));
