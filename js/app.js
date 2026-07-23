@@ -144,19 +144,6 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   video.playsInline = true;
   video.controls = false;
   if (isLocal) video.muted = true;
-  if (!isLocal) {
-    // El audio real de los recuadros ajenos sale por Web Audio API (ver
-    // _connectVolumeControl mas abajo), nunca por el propio <video>, que
-    // queda silenciado a proposito. Algunos controles nativos del sistema
-    // (sobre todo en celular) pueden intentar "desmutearlo" igual; esto lo
-    // vuelve a silenciar al instante si eso pasa, para que nunca se
-    // escuche el audio dos veces (uno real por nuestro control, otro sin
-    // control ninguno por el <video> nativo).
-    video.muted = true;
-    video.addEventListener("volumechange", () => {
-      if (!video.muted) video.muted = true;
-    });
-  }
 
   const label = document.createElement("span");
   label.className = "video-tile-label";
@@ -177,6 +164,10 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   // sin tocar nada de la conexion: no tiene sentido para tu propio recuadro
   // (no te escuchas a vos mismo).
   if (!isLocal) {
+    // El audio real sale por Web Audio API (ver _connectVolumeControl), no
+    // por el propio <video>, que por eso arranca silenciado.
+    video.muted = true;
+
     const volumeControl = document.createElement("input");
     volumeControl.type = "range";
     volumeControl.className = "video-tile-volume";
@@ -189,6 +180,29 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // onRemoteStream en la funcion que llama a createVideoTile): antes de
     // eso no hay audio que enrutar.
     let gainNode = null;
+    // Mientras el iPhone/iPad esta en su pantalla completa nativa (unico
+    // metodo posible en Safari viejo, ver enterFullscreen), su propio
+    // reproductor trae un boton de volumen/mute -- pero como el audio real
+    // pasa por Web Audio, ese boton nativo no hacia nada, y si el usuario
+    // lo tocaba para "desmutear" el <video>, se escuchaba doble. En vez de
+    // bloquearlo, se le cede el control real mientras dure: se apaga
+    // nuestra mezcla (gain a 0) y se deja sonar al <video> nativo, asi el
+    // boton nativo si mutea/desmutea de verdad. Al salir de esa pantalla
+    // completa se vuelve a nuestro control de siempre.
+    let inNativeFullscreen = false;
+    video.addEventListener("volumechange", () => {
+      if (!inNativeFullscreen && !video.muted) video.muted = true;
+    });
+    video.addEventListener("webkitbeginfullscreen", () => {
+      inNativeFullscreen = true;
+      video.muted = false;
+      if (gainNode) gainNode.gain.value = 0;
+    });
+    video.addEventListener("webkitendfullscreen", () => {
+      inNativeFullscreen = false;
+      video.muted = true;
+      if (gainNode) gainNode.gain.value = Number(volumeControl.value);
+    });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
     });
@@ -203,11 +217,10 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       // Se toma el audio directo de la transmision (createMediaStreamSource),
       // no "por dentro" del <video> (createMediaElementSource): en iOS/Safari
       // viejo esa segunda forma es conocida por fallar con transmisiones en
-      // vivo. Se silencia el <video> nativo para que el unico audio audible
-      // sea el que pasa por este control de volumen.
+      // vivo.
       const source = ctx.createMediaStreamSource(stream);
       gainNode = ctx.createGain();
-      gainNode.gain.value = Number(volumeControl.value);
+      gainNode.gain.value = inNativeFullscreen ? 0 : Number(volumeControl.value);
       source.connect(gainNode).connect(ctx.destination);
     };
   }
