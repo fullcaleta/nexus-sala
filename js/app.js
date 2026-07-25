@@ -1197,17 +1197,7 @@ function handleCallTrack(peerId, stream, track) {
     return;
   }
   console.log(`[NEXUS-CALL-DEBUG] handleCallTrack kind=${track.kind} de ${peerId}`);
-  // El audio y el video del otro lado llegan cada uno en su propio evento
-  // "track" (el de audio se conecta al aceptar/llamar, el de video recien
-  // cuando el otro lado prende su camara) y no siempre agrupados en la
-  // misma stream. Antes se armaba una stream vacia y se le iba haciendo
-  // addTrack despues -- algunos navegadores no reaccionan bien a eso (el
-  // <video> se queda "pausado" sin sonar ni fallar, ni bloqueado ni
-  // reproduciendo). Ahora se arma una stream NUEVA con todos los tracks
-  // conocidos hasta el momento cada vez que llega uno, y se reasigna
-  // entera: mas pesado pero mucho mas confiable.
   callRemoteTracks.add(track);
-  els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
   // "muted" a nivel WebRTC (distinto de silenciar el microfono) significa
   // "todavia no esta llegando informacion real de este track" -- arranca
   // asi siempre hasta que llegue el primer paquete de verdad.
@@ -1219,7 +1209,27 @@ function handleCallTrack(peerId, stream, track) {
     console.log(`[NEXUS-CALL] track ${track.kind} de ${peerId} dejo de traer datos (mute)`);
     if (track.kind === "video") els.callPanel.classList.remove("has-remote-video");
   });
-  tryPlayCallRemoteMedia();
+  scheduleCallRemoteStreamUpdate();
+}
+
+// El audio y el video del otro lado llegan cada uno en su propio evento
+// "track" (normalmente audio y video casi juntos al conectar, y el video
+// puede llegar bastante despues si recien ahi prenden la camara). Antes se
+// reasignaba srcObject cada vez que llegaba un track: si llegaban dos
+// juntos, la segunda asignacion cancelaba el play() de la primera con un
+// AbortError, y a veces la llamada se quedaba sin sonar por eso. Ahora se
+// juntan todos los tracks que lleguen en el mismo instante (microtask) y
+// se reasigna/reproduce una sola vez con todos adentro.
+let callRemoteStreamUpdateScheduled = false;
+function scheduleCallRemoteStreamUpdate() {
+  if (callRemoteStreamUpdateScheduled) return;
+  callRemoteStreamUpdateScheduled = true;
+  queueMicrotask(() => {
+    callRemoteStreamUpdateScheduled = false;
+    if (callState !== "active") return;
+    els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
+    tryPlayCallRemoteMedia();
+  });
 }
 
 // Chrome/Edge/Safari bloquean reproducir audio con sonido "solo" (sin un
@@ -1244,6 +1254,14 @@ function tryPlayCallRemoteMedia() {
   playResult
     .then(() => console.log("[NEXUS-CALL] audio/video de la llamada reproduciendo"))
     .catch((err) => {
+      if (err.name === "AbortError") {
+        // No es un bloqueo de verdad: alguien reasigno la fuente (llego
+        // otro track) mientras este play() todavia estaba en curso. Se
+        // reintenta enseguida, no hace falta esperar un toque.
+        console.log("[NEXUS-CALL] play() interrumpido por un track nuevo, reintentando ya mismo");
+        tryPlayCallRemoteMedia();
+        return;
+      }
       console.warn("[NEXUS-CALL] reproduccion bloqueada por el navegador, se reintenta con el proximo toque:", err.name);
       document.addEventListener("click", tryPlayCallRemoteMedia, { once: true });
     });
