@@ -347,6 +347,25 @@ export function createWebRTCManager({
     return next;
   }
 
+  // Resume el SDP a una linea por pista (que tipo, que direccion quedo
+  // negociada: sendrecv/sendonly/recvonly/inactive) para poder ver de un
+  // vistazo si algo quedo mal declarado, sin tener que leer el SDP entero.
+  function summarizeSdp(sdp) {
+    const lines = sdp.split(/\r\n|\n/);
+    const parts = [];
+    let current = null;
+    for (const line of lines) {
+      if (line.startsWith("m=")) {
+        if (current) parts.push(current);
+        current = { m: line, dir: "sendrecv (default)" };
+      } else if (current && /^a=(sendrecv|sendonly|recvonly|inactive)/.test(line)) {
+        current.dir = line.slice(2);
+      }
+    }
+    if (current) parts.push(current);
+    return parts.map((p) => `[${p.m} => ${p.dir}]`).join(" ");
+  }
+
   async function negotiateCallWith(peerId) {
     const pc = callPeerConnections.get(peerId);
     if (!pc) return;
@@ -354,7 +373,7 @@ export function createWebRTCManager({
       callMakingOffer.set(peerId, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      console.log(`[NEXUS-CALL] mandando oferta de llamada a ${peerId}`);
+      console.log(`[NEXUS-CALL-SDP] oferta propia a ${peerId}: ${summarizeSdp(offer.sdp)}`);
       sendSignal(peerId, "call-description", pc.localDescription);
     } catch (err) {
       console.warn("No se pudo negociar la llamada:", err);
@@ -465,11 +484,12 @@ export function createWebRTCManager({
         return;
       }
 
+      console.log(`[NEXUS-CALL-SDP] ${payload.type} recibida de ${from}: ${summarizeSdp(payload.sdp)}`);
       await pc.setRemoteDescription(payload);
       if (payload.type === "offer") {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        console.log(`[NEXUS-CALL] mandando respuesta de llamada a ${from}`);
+        console.log(`[NEXUS-CALL-SDP] respuesta propia a ${from}: ${summarizeSdp(answer.sdp)}`);
         sendSignal(from, "call-description", pc.localDescription);
       }
     } else if (signalType === "call-candidate") {

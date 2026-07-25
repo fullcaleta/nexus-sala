@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=7";
+import { createWebRTCManager } from "./webrtc.js?v=8";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -1225,11 +1225,14 @@ let callGainNode = null;
 function connectCallAudio(track) {
   if (callGainNode) return; // ya conectado
   const ctx = getSharedAudioContext();
+  console.log(`[NEXUS-CALL] AudioContext estado=${ctx.state}`);
   const source = ctx.createMediaStreamSource(new MediaStream([track]));
   callGainNode = ctx.createGain();
   callGainNode.gain.value = 1;
   source.connect(callGainNode).connect(ctx.destination);
   console.log("[NEXUS-CALL] audio de la llamada conectado por Web Audio");
+  track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
+  track.addEventListener("mute", () => console.log("[NEXUS-CALL] track de audio de la llamada DEJO de traer datos (mute)"));
 }
 
 function handleCallEnded(peerId) {
