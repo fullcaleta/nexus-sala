@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=8";
+import { createWebRTCManager } from "./webrtc.js?v=9";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 

@@ -443,10 +443,17 @@ export function createWebRTCManager({
   }
 
   // Prende/apaga la camara durante una llamada ya conectada. null apaga
-  // (deja de mandar video, sin sacar el transceiver ni renegociar).
+  // (deja de mandar video). En teoria replaceTrack() alcanza solo, sin
+  // renegociar (el transceiver ya esta declarado desde el arranque de la
+  // llamada) -- pero algunos Safari viejos (iPhone 7 entre ellos) no
+  // arrancan a mandar el video de verdad con eso solo, mientras el otro
+  // lado nunca ve nada. Por eso se agrega ademas una renegociacion real:
+  // mas lento, pero mucho mas compatible.
   function setCallVideoTrack(peerId, track) {
     const sender = callVideoSenders.get(peerId);
-    if (sender) sender.replaceTrack(track);
+    if (!sender) return;
+    sender.replaceTrack(track);
+    scheduleCallNegotiation(peerId);
   }
 
   function endCall(peerId) {
