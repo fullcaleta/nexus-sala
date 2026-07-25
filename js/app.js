@@ -1343,18 +1343,19 @@ els.callCameraBtn.addEventListener("click", async () => {
   }
 });
 
-function isCallPanelFullscreen() {
-  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-  return fsEl === els.callPanel || fsEl === els.callRemoteVideo;
+// "Agrandar" el panel de la llamada NO pide pantalla completa de verdad al
+// sistema operativo (Element.requestFullscreen): en iOS viejo (iPhone 7
+// entre otros) eso solo funciona sobre un <video> con contenido real, asi
+// que si nadie prendio la camara no hay nada para agrandar y el boton no
+// hacia nada. En cambio, se agranda el panel DENTRO de la misma pagina con
+// una clase (mismo truco que ya usa "agrandar el chat"), que funciona
+// igual en cualquier dispositivo sin depender de esa API.
+function isCallPanelMaximized() {
+  return els.callPanel.classList.contains("call-panel-maximized");
 }
 
 els.callFullscreenBtn.addEventListener("click", () => {
-  if (isCallPanelFullscreen()) {
-    if (document.exitFullscreen) document.exitFullscreen();
-    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-    return;
-  }
-  enterFullscreen(els.callPanel, els.callRemoteVideo);
+  els.callPanel.classList.toggle("call-panel-maximized");
 });
 
 els.callPlayOverlay.addEventListener("click", () => {
@@ -1373,7 +1374,7 @@ els.callPlayOverlay.addEventListener("click", () => {
   let offsetY = 0;
 
   els.callPanelHeader.addEventListener("pointerdown", (e) => {
-    if (isCallPanelFullscreen()) return;
+    if (isCallPanelMaximized()) return;
     dragging = true;
     const rect = els.callPanel.getBoundingClientRect();
     offsetX = e.clientX - rect.left;
@@ -1405,6 +1406,7 @@ function resetCallPanelPosition() {
   els.callPanel.style.left = "";
   els.callPanel.style.top = "";
   els.callPanel.style.right = "";
+  els.callPanel.classList.remove("call-panel-maximized");
 }
 
 // Tocar el recuadro chico (la propia camara, en la esquina) lo intercambia

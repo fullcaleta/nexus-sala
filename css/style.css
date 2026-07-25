@@ -1133,8 +1133,16 @@ body {
   z-index: 3;
 }
 
-.call-panel:fullscreen,
-.call-panel:-webkit-full-screen {
+/* "Agrandar" el panel de la llamada: no pide pantalla completa real al
+   sistema operativo (ver isCallPanelMaximized en app.js), solo crece
+   dentro de la misma pagina -- funciona igual en cualquier dispositivo,
+   incluido iOS viejo (iPhone 7) donde pedir pantalla completa sobre un
+   div generico no esta disponible. */
+.call-panel.call-panel-maximized {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: 100vw;
   height: 100vh;
   border-radius: 0;
@@ -1165,8 +1173,7 @@ body {
   display: block;
 }
 
-.call-panel:fullscreen .call-panel-media,
-.call-panel:-webkit-full-screen .call-panel-media {
+.call-panel.call-panel-maximized .call-panel-media {
   display: block;
   flex: 1 1 auto;
 }
@@ -1182,8 +1189,7 @@ body {
   display: block;
 }
 
-.call-panel:fullscreen .call-video-main,
-.call-panel:-webkit-full-screen .call-video-main {
+.call-panel.call-panel-maximized .call-video-main {
   height: 100%;
 }
 
