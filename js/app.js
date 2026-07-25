@@ -316,11 +316,14 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
       // Bug conocido de WebKit/iOS: al salir de su pantalla completa
       // nativa, a veces no vuelve a "pintar" los botones que quedaban
-      // encima del video (siguen ahi y funcionan, pero quedan invisibles).
-      // Sacarlo y volver a ponerlo fuerza a que se repinte.
-      fullscreenBtn.style.display = "none";
-      void fullscreenBtn.offsetHeight; // fuerza el reflow
-      fullscreenBtn.style.display = "";
+      // encima del video (siguen ahi y funcionan -- responden al toque --
+      // pero quedan invisibles). Alternar display en el boton solo no
+      // alcanzo; se fuerza un repintado mas agresivo de TODO el recuadro
+      // (display:none del tile entero, reflow, display normal), que es lo
+      // que suele hacer falta para esta clase de bug de WebKit.
+      tile.style.display = "none";
+      void tile.offsetHeight; // fuerza el reflow
+      tile.style.display = "";
     });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
@@ -1006,7 +1009,21 @@ els.joinForm.addEventListener("submit", async (e) => {
     dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
       const player = new Audio("sounds/mp.mp3");
       player.volume = 0.6;
-      player.play().then(() => player.pause()).catch(() => {});
+      // En dispositivos lentos (iPhone 7 sobre todo), el play() de este
+      // desbloqueo silencioso a veces alcanza a sonar una fraccion de
+      // segundo de verdad antes de que llegue el pause() -- se lo muta
+      // mientras dura el truco, y se lo destapa recien despues, para que
+      // eso nunca se escuche.
+      player.muted = true;
+      player.play()
+        .then(() => {
+          player.pause();
+          player.currentTime = 0;
+          player.muted = false;
+        })
+        .catch(() => {
+          player.muted = false;
+        });
       return player;
     });
   } catch (err) {
