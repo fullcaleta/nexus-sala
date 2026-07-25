@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=5";
+import { createWebRTCManager } from "./webrtc.js?v=6";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -748,6 +748,15 @@ async function joinRoom() {
       track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
     },
     onCallTrack: handleCallTrack,
+    onCallConnected: (peerId) => {
+      if (peerId !== callPeerId || callState !== "active") return;
+      // Reintento extra apenas la conexion de la llamada esta realmente
+      // lista: los intentos de reproducir que se disparan apenas llega
+      // cada track pueden pisarse entre si si audio y video llegan casi
+      // juntos (ver AbortError en tryPlayCallRemoteMedia). Este, en
+      // cambio, pasa cuando ya no hay nada mas por negociar.
+      tryPlayCallRemoteMedia();
+    },
     onCallEnded: handleCallEnded,
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
