@@ -1144,8 +1144,17 @@ body {
   right: 0;
   bottom: 0;
   width: 100vw;
-  height: 100vh;
+  height: 100vh; /* respaldo para navegadores viejos que no entienden dvh */
+  height: 100dvh; /* alto real visible, sin contar la barra del navegador */
   border-radius: 0;
+}
+
+/* En el iPhone la barra de Safari (arriba o abajo segun el modelo) y la
+   franja del indicador de inicio pueden tapar los botones si el panel
+   ocupa "toda" la pantalla calculada con vh -- se les deja un margen
+   seguro (0 en navegadores que no lo necesitan). */
+.call-panel.call-panel-maximized .call-panel-controls {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
 }
 
 .call-panel-header {
