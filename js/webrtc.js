@@ -354,6 +354,7 @@ export function createWebRTCManager({
       callMakingOffer.set(peerId, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log(`[NEXUS-CALL] mandando oferta de llamada a ${peerId}`);
       sendSignal(peerId, "call-description", pc.localDescription);
     } catch (err) {
       console.warn("No se pudo negociar la llamada:", err);
@@ -385,16 +386,25 @@ export function createWebRTCManager({
     };
 
     pc.ontrack = (event) => {
+      console.log(
+        `[NEXUS-CALL] track recibido de ${peerId}: ${event.track.kind}, streamId=${event.streams[0]?.id}, muted=${event.track.muted}`
+      );
       onCallTrack?.(peerId, event.streams[0], event.track);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[NEXUS-CALL] ICE con ${peerId}: ${pc.iceConnectionState}`);
+    };
+
     pc.onconnectionstatechange = () => {
+      console.log(`[NEXUS-CALL] conexion con ${peerId}: ${pc.connectionState}`);
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         endCall(peerId);
         onCallEnded?.(peerId);
       }
     };
 
+    console.log(`[NEXUS-CALL] conexion de llamada creada para ${peerId} (audio=${!!audioTrack})`);
     return pc;
   }
 
@@ -440,18 +450,26 @@ export function createWebRTCManager({
   // siguiendo el protocolo de invitar/aceptar (ver app.js) -- se ignora por
   // las dudas, en vez de crear una llamada "fantasma".
   async function handleCallSignal({ from, signalType, payload }) {
+    console.log(`[NEXUS-CALL] señal recibida de ${from}: ${signalType}${payload?.type ? " (" + payload.type + ")" : ""}`);
     const pc = callPeerConnections.get(from);
-    if (!pc) return;
+    if (!pc) {
+      console.warn(`[NEXUS-CALL] llego "${signalType}" de ${from} pero no hay conexion de llamada preparada, se ignora`);
+      return;
+    }
     if (signalType === "call-description") {
       const collision = payload.type === "offer" && (callMakingOffer.get(from) || pc.signalingState !== "stable");
       const shouldIgnore = !isPolite(from) && collision;
       callIgnoreOffer.set(from, shouldIgnore);
-      if (shouldIgnore) return;
+      if (shouldIgnore) {
+        console.warn(`[NEXUS-CALL] oferta de ${from} ignorada por colision`);
+        return;
+      }
 
       await pc.setRemoteDescription(payload);
       if (payload.type === "offer") {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log(`[NEXUS-CALL] mandando respuesta de llamada a ${from}`);
         sendSignal(from, "call-description", pc.localDescription);
       }
     } else if (signalType === "call-candidate") {

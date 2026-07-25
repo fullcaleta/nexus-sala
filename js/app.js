@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=4";
+import { createWebRTCManager } from "./webrtc.js?v=5";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -1187,7 +1187,13 @@ function hangupActiveCall() {
 }
 
 function handleCallTrack(peerId, stream, track) {
-  if (peerId !== callPeerId || callState !== "active") return;
+  if (peerId !== callPeerId || callState !== "active") {
+    console.warn(
+      `[NEXUS-CALL-DEBUG] track de ${peerId} ignorado: callPeerId=${callPeerId}, callState=${callState}`
+    );
+    return;
+  }
+  console.log(`[NEXUS-CALL-DEBUG] handleCallTrack kind=${track.kind} de ${peerId}`);
   // El audio y el video del otro lado llegan cada uno en su propio evento
   // "track" (el de audio se conecta al aceptar/llamar, el de video recien
   // cuando el otro lado prende su camara) y no siempre agrupados en la
