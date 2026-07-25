@@ -808,14 +808,23 @@ async function joinRoom() {
     onModeratorExtraStream: (peerId, stream, track) => {
       const info = knownMembers.get(peerId);
       if (track.kind === "audio") {
-        // Solo hace falta reproducirlo, no un recuadro de video, para poder
-        // supervisar el audio de una llamada privada ajena.
-        const audio = document.createElement("audio");
-        audio.autoplay = true;
-        audio.hidden = true;
-        audio.srcObject = stream;
-        document.body.appendChild(audio);
-        track.addEventListener("ended", () => audio.remove());
+        // Mismo motivo que el audio de la propia llamada (ver
+        // connectCallAudio): un <audio autoplay> con sonido de verdad no
+        // siempre arranca solo (sobre todo en Safari/iOS), asi que se
+        // rutea por Web Audio API en vez de depender del autoplay nativo.
+        const ctx = getSharedAudioContext();
+        const source = ctx.createMediaStreamSource(new MediaStream([track]));
+        const gain = ctx.createGain();
+        gain.gain.value = 1;
+        source.connect(gain).connect(ctx.destination);
+        track.addEventListener("ended", () => {
+          try {
+            source.disconnect();
+            gain.disconnect();
+          } catch (err) {
+            // ya se estaba descartando de todas formas
+          }
+        });
         return;
       }
       const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
