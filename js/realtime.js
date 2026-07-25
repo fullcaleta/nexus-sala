@@ -189,6 +189,30 @@ export function kickUser(targetId) {
   sendMessage({ type: "kick", targetId });
 }
 
+// Llamada privada 1 a 1: estas cinco solo avisan intencion (llamar, aceptar,
+// rechazar, cancelar, colgar). El audio/video en si va por una conexion
+// WebRTC aparte (ver webrtc.js), señalizada con sendSignal como cualquier
+// otra, solo que con signalType "call-description"/"call-candidate".
+export function sendCallInvite(to) {
+  sendMessage({ type: "call-invite", to });
+}
+
+export function sendCallAccept(to) {
+  sendMessage({ type: "call-accept", to });
+}
+
+export function sendCallReject(to) {
+  sendMessage({ type: "call-reject", to });
+}
+
+export function sendCallCancel(to) {
+  sendMessage({ type: "call-cancel", to });
+}
+
+export function sendCallHangup(to) {
+  sendMessage({ type: "call-hangup", to });
+}
+
 export function disconnect() {
   if (ws) {
     ws.onclose = null;

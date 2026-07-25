@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=17" />
+  <link rel="stylesheet" href="css/style.css?v=18" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -106,7 +106,7 @@
           <button type="button" id="emoji-btn" class="btn btn-icon-small" title="Insertar un emoji">😀</button>
           <button type="button" id="gif-btn" class="btn btn-icon-small" title="Enviar un GIF">🎬</button>
           <button type="button" id="attach-btn" class="btn btn-icon-small dm-only-btn hidden" title="Adjuntar imagen, video, PDF o mp3">📎</button>
-          <button type="button" id="camera-capture-btn" class="btn btn-icon-small dm-only-btn hidden" title="Grabar video con la cámara">📞</button>
+          <button type="button" id="camera-capture-btn" class="btn btn-icon-small dm-only-btn hidden" title="Llamar">📞</button>
         </div>
         <div class="chat-form-input-row">
           <input id="attach-file-input" type="file" accept="image/*,video/*,application/pdf,audio/mpeg" class="hidden" />
@@ -117,22 +117,40 @@
     </aside>
   </div>
 
-  <!-- Camara en vivo para privados: grabar un video corto y mandarlo por DM -->
-  <div id="camera-modal" class="camera-modal hidden">
-    <video id="camera-modal-video" autoplay playsinline muted></video>
-    <div id="camera-modal-preview" class="camera-modal-preview hidden"></div>
-    <span id="camera-modal-timer" class="camera-modal-timer hidden">0:00</span>
-    <div id="camera-modal-bar" class="camera-modal-bar">
-      <button type="button" id="camera-modal-close-btn" class="btn btn-icon" title="Cerrar">✕</button>
-      <button type="button" id="camera-modal-video-btn" class="btn btn-icon" title="Grabar video">⏺️</button>
-      <button type="button" id="camera-modal-flip-btn" class="btn btn-icon" title="Girar cámara">🔄</button>
-    </div>
-    <div id="camera-modal-preview-bar" class="camera-modal-bar hidden">
-      <button type="button" id="camera-modal-retry-btn" class="btn btn-icon" title="Repetir">↺</button>
-      <button type="button" id="camera-modal-send-btn" class="btn btn-primary">Enviar</button>
+  <!-- Llamada privada 1 a 1 (ver startOutgoingCall en app.js) -->
+  <div id="call-outgoing-overlay" class="call-overlay hidden">
+    <div class="call-overlay-card glass-panel">
+      <p>Llamando a <strong id="call-outgoing-name"></strong>...</p>
+      <button type="button" id="call-cancel-btn" class="btn btn-danger">Cancelar</button>
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=32"></script>
+  <div id="call-incoming-overlay" class="call-overlay hidden">
+    <div class="call-overlay-card glass-panel">
+      <p><strong id="call-incoming-name"></strong> te está llamando</p>
+      <div class="call-overlay-actions">
+        <button type="button" id="call-reject-btn" class="btn btn-danger">Rechazar</button>
+        <button type="button" id="call-accept-btn" class="btn btn-primary">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="call-panel" class="call-panel hidden">
+    <div class="call-panel-header">
+      <span id="call-panel-name"></span>
+      <span class="call-panel-status">En llamada</span>
+    </div>
+    <div class="call-panel-media">
+      <video id="call-remote-video" autoplay playsinline></video>
+      <video id="call-local-video" autoplay playsinline muted class="hidden"></video>
+    </div>
+    <div class="call-panel-controls">
+      <button type="button" id="call-mute-btn" class="btn btn-icon" title="Silenciar micrófono">🎤</button>
+      <button type="button" id="call-camera-btn" class="btn btn-icon" title="Activar cámara">📷</button>
+      <button type="button" id="call-hangup-btn" class="btn btn-danger" title="Colgar">📞</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js?v=33"></script>
 </body>
 </html>

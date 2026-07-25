@@ -8,10 +8,15 @@ import {
   sendDmMedia,
   uploadMedia,
   mediaUrl,
+  sendCallInvite,
+  sendCallAccept,
+  sendCallReject,
+  sendCallCancel,
+  sendCallHangup,
   kickUser,
   disconnect,
-} from "./realtime.js?v=3";
-import { createWebRTCManager } from "./webrtc.js?v=3";
+} from "./realtime.js?v=4";
+import { createWebRTCManager } from "./webrtc.js?v=4";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -38,17 +43,20 @@ const els = {
   attachBtn: document.getElementById("attach-btn"),
   attachFileInput: document.getElementById("attach-file-input"),
   cameraCaptureBtn: document.getElementById("camera-capture-btn"),
-  cameraModal: document.getElementById("camera-modal"),
-  cameraModalVideo: document.getElementById("camera-modal-video"),
-  cameraModalPreview: document.getElementById("camera-modal-preview"),
-  cameraModalTimer: document.getElementById("camera-modal-timer"),
-  cameraModalBar: document.getElementById("camera-modal-bar"),
-  cameraModalPreviewBar: document.getElementById("camera-modal-preview-bar"),
-  cameraModalCloseBtn: document.getElementById("camera-modal-close-btn"),
-  cameraModalVideoBtn: document.getElementById("camera-modal-video-btn"),
-  cameraModalFlipBtn: document.getElementById("camera-modal-flip-btn"),
-  cameraModalRetryBtn: document.getElementById("camera-modal-retry-btn"),
-  cameraModalSendBtn: document.getElementById("camera-modal-send-btn"),
+  callOutgoingOverlay: document.getElementById("call-outgoing-overlay"),
+  callOutgoingName: document.getElementById("call-outgoing-name"),
+  callCancelBtn: document.getElementById("call-cancel-btn"),
+  callIncomingOverlay: document.getElementById("call-incoming-overlay"),
+  callIncomingName: document.getElementById("call-incoming-name"),
+  callRejectBtn: document.getElementById("call-reject-btn"),
+  callAcceptBtn: document.getElementById("call-accept-btn"),
+  callPanel: document.getElementById("call-panel"),
+  callPanelName: document.getElementById("call-panel-name"),
+  callRemoteVideo: document.getElementById("call-remote-video"),
+  callLocalVideo: document.getElementById("call-local-video"),
+  callMuteBtn: document.getElementById("call-mute-btn"),
+  callCameraBtn: document.getElementById("call-camera-btn"),
+  callHangupBtn: document.getElementById("call-hangup-btn"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
@@ -72,13 +80,6 @@ const MEDIA_LIMITS_CLIENT = {
   audio: 15 * 1024 * 1024,
   document: 15 * 1024 * 1024,
 };
-
-function pickSupportedMimeType(candidates) {
-  for (const type of candidates) {
-    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) return type;
-  }
-  return candidates[candidates.length - 1]; // ultimo recurso, dejar que el navegador decida
-}
 
 function generateId() {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
@@ -157,15 +158,14 @@ const generalMessages = []; // buffer local del chat publico, para poder re-rend
 const dmThreads = new Map(); // peerId -> [{from, fromName, to, toName, text, at}]
 const allPrivateLog = []; // solo para el moderador: TODOS los privados de la sala, en orden
 
-// Camara en vivo (graba un video corto) para privados: ver openCameraModal
-// mas abajo.
-let cameraModalStream = null;
-let cameraModalFacing = "environment";
-let cameraModalRecorder = null;
-let cameraModalChunks = [];
-let cameraModalRecordedBlob = null;
-let cameraModalRecordStart = 0;
-let cameraModalTimerInterval = null;
+// Llamada privada 1 a 1: ver startOutgoingCall mas abajo. Solo una llamada
+// a la vez tiene sentido en esta interfaz.
+let callState = "idle"; // "idle" | "calling" | "ringing" | "active"
+let callPeerId = null;
+let callPeerName = "";
+let callLocalStream = null; // microfono (+ camara si se prende) de la llamada activa
+let callVideoOn = false;
+let callRingTimeout = null;
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -722,16 +722,30 @@ async function joinRoom() {
       removeVideoTile(peerId);
       removeVideoTile(`${peerId}-modcam`);
     },
-    // Solo le llega algo a esto si yo soy moderador y otra persona esta
-    // compartiendo pantalla: es su camara real, aparte, en su propio
-    // recuadro (ver sendCameraToModerators en webrtc.js).
+    // Solo le llega algo a esto si yo soy moderador: o bien la camara real
+    // de alguien que esta compartiendo pantalla (ver sendCameraToModerators
+    // en webrtc.js), o bien el audio/video de una llamada privada ajena que
+    // estoy supervisando (ver sendCallTrackToModerators).
     onModeratorExtraStream: (peerId, stream, track) => {
       const info = knownMembers.get(peerId);
+      if (track.kind === "audio") {
+        // Solo hace falta reproducirlo, no un recuadro de video, para poder
+        // supervisar el audio de una llamada privada ajena.
+        const audio = document.createElement("audio");
+        audio.autoplay = true;
+        audio.hidden = true;
+        audio.srcObject = stream;
+        document.body.appendChild(audio);
+        track.addEventListener("ended", () => audio.remove());
+        return;
+      }
       const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
       video.srcObject = stream;
       video._connectVolumeControl?.();
       track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
     },
+    onCallTrack: handleCallTrack,
+    onCallEnded: handleCallEnded,
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
   // Sincronizar el estado interno ANTES de agregar cualquier track: sin esto,
@@ -826,6 +840,55 @@ async function joinRoom() {
   addRoomListener("gif-dm", handleIncomingDm);
   addRoomListener("dm-media", handleIncomingDm);
 
+  // Llamada privada 1 a 1: ver startOutgoingCall/resetCallState mas abajo.
+  addRoomListener("call-invite", (msg) => {
+    if (callState !== "idle") {
+      // ya ocupado (llamando, sonando o en otra llamada): se rechaza sola,
+      // sin interrumpir con un cartel.
+      sendCallReject(msg.from);
+      return;
+    }
+    callPeerId = msg.from;
+    callPeerName = msg.fromName;
+    callState = "ringing";
+    els.callIncomingName.textContent = callPeerName;
+    els.callIncomingOverlay.classList.remove("hidden");
+    playDmSound();
+  });
+
+  addRoomListener("call-cancel", (msg) => {
+    if (callState === "ringing" && msg.from === callPeerId) resetCallState();
+  });
+
+  addRoomListener("call-reject", (msg) => {
+    if (callState === "calling" && msg.from === callPeerId) resetCallState();
+  });
+
+  addRoomListener("call-accept", async (msg) => {
+    if (callState !== "calling" || msg.from !== callPeerId) return;
+    if (callRingTimeout) {
+      clearTimeout(callRingTimeout);
+      callRingTimeout = null;
+    }
+    els.callOutgoingOverlay.classList.add("hidden");
+    try {
+      callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      sendCallHangup(callPeerId);
+      resetCallState();
+      alert("No se pudo acceder al micrófono para iniciar la llamada.");
+      return;
+    }
+    callState = "active";
+    webrtcManager.startCallOffer(callPeerId, callLocalStream);
+    webrtcManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+    showCallPanel();
+  });
+
+  addRoomListener("call-hangup", (msg) => {
+    if (callState !== "idle" && msg.from === callPeerId) resetCallState();
+  });
+
   addRoomListener("kicked", () => {
     alert("Fuiste expulsado de la sala por un moderador.");
     cleanupAndReturnToJoinScreen();
@@ -845,7 +908,7 @@ async function joinRoom() {
 function cleanupAndReturnToJoinScreen() {
   for (const unsubscribe of roomListeners) unsubscribe();
   roomListeners.length = 0;
-  closeCameraModal();
+  resetCallState();
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   // si se salio de la sala mientras se compartia pantalla, tanto el
@@ -1001,153 +1064,182 @@ els.attachFileInput.addEventListener("change", async () => {
   await sendMediaToActiveThread(kind, file);
 });
 
-// --- Camara en vivo: grabar un video corto ---
+// --- Llamada privada 1 a 1 ---
+// Arranca solo con microfono (nunca con la camara prendida sola); quien
+// esta en la llamada puede prender su camara despues si quiere, desde el
+// panel de la llamada activa. El moderador recibe una copia del audio (y
+// del video, si se prende) para poder supervisar, igual que ya pasa con el
+// microfono/camara de la sala general.
 
-async function openCameraModal() {
+function stopCallLocalStream() {
+  if (callLocalStream) {
+    callLocalStream.getTracks().forEach((t) => t.stop());
+    callLocalStream = null;
+  }
+}
+
+function resetCallState() {
+  if (callRingTimeout) {
+    clearTimeout(callRingTimeout);
+    callRingTimeout = null;
+  }
+  if (callPeerId) {
+    webrtcManager?.endCall(callPeerId);
+    webrtcManager?.stopCallTrackToModerators("audio");
+    webrtcManager?.stopCallTrackToModerators("video");
+  }
+  stopCallLocalStream();
+  callState = "idle";
+  callPeerId = null;
+  callPeerName = "";
+  callVideoOn = false;
+  els.callOutgoingOverlay.classList.add("hidden");
+  els.callIncomingOverlay.classList.add("hidden");
+  els.callPanel.classList.add("hidden");
+  els.callPanel.classList.remove("has-remote-video");
+  els.callRemoteVideo.srcObject = null;
+  els.callLocalVideo.srcObject = null;
+  els.callLocalVideo.classList.add("hidden");
+}
+
+function showCallPanel() {
+  els.callPanelName.textContent = callPeerName;
+  els.callPanel.classList.remove("hidden");
+  els.callPanel.classList.remove("has-remote-video");
+  els.callMuteBtn.textContent = "🎤";
+  els.callMuteBtn.classList.remove("muted");
+  els.callCameraBtn.textContent = "📷";
+  els.callCameraBtn.classList.remove("active");
+}
+
+function startOutgoingCall() {
   if (activeThread === "general" || activeThread === "mod-all") return;
+  if (callState !== "idle") return; // ya en otra llamada o esperando respuesta
   if (!navigator.mediaDevices?.getUserMedia) {
-    alert("Este navegador no permite usar la cámara acá.");
+    alert("Este navegador no permite hacer llamadas acá.");
     return;
   }
-  resetCameraModalPreview();
-  els.cameraModal.classList.remove("hidden");
-  await startCameraModalStream();
+  callPeerId = activeThread;
+  callPeerName = knownMembers.get(callPeerId)?.name || "Usuario";
+  callState = "calling";
+  els.callOutgoingName.textContent = callPeerName;
+  els.callOutgoingOverlay.classList.remove("hidden");
+  sendCallInvite(callPeerId);
+  // Se cancela sola si del otro lado no contestan (no dejar "colgado" para
+  // siempre esperando).
+  callRingTimeout = setTimeout(() => {
+    if (callState === "calling") cancelOutgoingCall();
+  }, 30000);
 }
 
-async function startCameraModalStream() {
-  stopCameraModalStream();
+function cancelOutgoingCall() {
+  if (callState !== "calling") return;
+  sendCallCancel(callPeerId);
+  resetCallState();
+}
+
+function rejectIncomingCall() {
+  if (callState !== "ringing") return;
+  sendCallReject(callPeerId);
+  resetCallState();
+}
+
+async function acceptIncomingCall() {
+  if (callState !== "ringing") return;
+  const peerId = callPeerId;
+  els.callIncomingOverlay.classList.add("hidden");
   try {
-    cameraModalStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: cameraModalFacing } },
-      audio: true,
-    });
+    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    alert("No se pudo acceder a la cámara.");
-    closeCameraModal();
+    sendCallReject(peerId);
+    resetCallState();
+    alert("No se pudo acceder al micrófono para atender la llamada.");
     return;
   }
-  els.cameraModalVideo.srcObject = cameraModalStream;
+  // Se prepara la conexion (con el microfono ya en mano) ANTES de avisar
+  // que se acepta: asi, cuando la oferta de quien llama llegue, este lado
+  // ya esta listo para responderla en el momento, sin carreras de tiempo.
+  webrtcManager.prepareCallReceiver(peerId, callLocalStream);
+  sendCallAccept(peerId);
+  callState = "active";
+  webrtcManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+  openDmWith(peerId, callPeerName);
+  showCallPanel();
 }
 
-function stopCameraModalStream() {
-  if (cameraModalStream) {
-    cameraModalStream.getTracks().forEach((t) => t.stop());
-    cameraModalStream = null;
+function hangupActiveCall() {
+  if (callState !== "active") return;
+  sendCallHangup(callPeerId);
+  resetCallState();
+}
+
+function handleCallTrack(peerId, stream, track) {
+  if (peerId !== callPeerId || callState !== "active") return;
+  els.callRemoteVideo.srcObject = stream;
+  if (track.kind === "video") {
+    // onmute/onunmute avisan cuando el video empieza/deja de traer cuadros
+    // de verdad: el transceiver de video existe desde el arranque de la
+    // llamada (ver webrtc.js), pero al principio esta "mudo" porque nadie
+    // prendio la camara todavia.
+    track.onunmute = () => els.callPanel.classList.add("has-remote-video");
+    track.onmute = () => els.callPanel.classList.remove("has-remote-video");
   }
 }
 
-function closeCameraModal() {
-  if (els.cameraModal.classList.contains("hidden")) return;
-  stopCameraModalRecording(false);
-  stopCameraModalStream();
-  els.cameraModal.classList.add("hidden");
-  resetCameraModalPreview();
+function handleCallEnded(peerId) {
+  if (peerId !== callPeerId) return;
+  resetCallState();
 }
 
-function resetCameraModalPreview() {
-  cameraModalRecordedBlob = null;
-  els.cameraModalPreview.innerHTML = "";
-  els.cameraModalPreview.classList.add("hidden");
-  els.cameraModalPreviewBar.classList.add("hidden");
-  els.cameraModalVideo.classList.remove("hidden");
-  els.cameraModalBar.classList.remove("hidden");
-}
+els.cameraCaptureBtn.addEventListener("click", startOutgoingCall);
+els.callCancelBtn.addEventListener("click", cancelOutgoingCall);
+els.callRejectBtn.addEventListener("click", rejectIncomingCall);
+els.callAcceptBtn.addEventListener("click", acceptIncomingCall);
+els.callHangupBtn.addEventListener("click", hangupActiveCall);
 
-function showCameraModalPreview(objectUrl) {
-  els.cameraModalVideo.classList.add("hidden");
-  els.cameraModalBar.classList.add("hidden");
-  els.cameraModalPreview.innerHTML = "";
-  const video = document.createElement("video");
-  video.src = objectUrl;
-  video.controls = true;
-  video.playsInline = true;
-  els.cameraModalPreview.appendChild(video);
-  els.cameraModalPreview.classList.remove("hidden");
-  els.cameraModalPreviewBar.classList.remove("hidden");
-}
-
-function updateCameraModalTimer() {
-  const secs = Math.floor((Date.now() - cameraModalRecordStart) / 1000);
-  const mm = Math.floor(secs / 60);
-  const ss = String(secs % 60).padStart(2, "0");
-  els.cameraModalTimer.textContent = `${mm}:${ss}`;
-  // Tope de seguridad: un video mas largo se acerca rapido al limite de
-  // 25 MB y tarda mucho en subir con la conexion casera del servidor.
-  if (secs >= 60) els.cameraModalVideoBtn.click();
-}
-
-function startCameraModalRecording() {
-  if (!cameraModalStream) return;
-  cameraModalChunks = [];
-  const mimeType = pickSupportedMimeType(["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"]);
-  cameraModalRecorder = new MediaRecorder(cameraModalStream, { mimeType });
-  cameraModalRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) cameraModalChunks.push(e.data);
-  };
-  cameraModalRecorder.onstop = () => {
-    if (cameraModalChunks.length === 0) return;
-    const blob = new Blob(cameraModalChunks, { type: mimeType.split(";")[0] });
-    cameraModalRecordedBlob = blob;
-    showCameraModalPreview(URL.createObjectURL(blob));
-  };
-  cameraModalRecorder.start();
-  els.cameraModalVideoBtn.textContent = "⏹️";
-  els.cameraModalVideoBtn.title = "Detener grabación";
-  els.cameraModalVideoBtn.classList.add("recording");
-  cameraModalRecordStart = Date.now();
-  els.cameraModalTimer.classList.remove("hidden");
-  cameraModalTimerInterval = setInterval(updateCameraModalTimer, 250);
-}
-
-function stopCameraModalRecording(keepBlob) {
-  if (cameraModalTimerInterval) {
-    clearInterval(cameraModalTimerInterval);
-    cameraModalTimerInterval = null;
-  }
-  els.cameraModalTimer.classList.add("hidden");
-  els.cameraModalVideoBtn.textContent = "⏺️";
-  els.cameraModalVideoBtn.title = "Grabar video";
-  els.cameraModalVideoBtn.classList.remove("recording");
-  if (cameraModalRecorder && cameraModalRecorder.state === "recording") {
-    if (!keepBlob) cameraModalRecorder.ondataavailable = null;
-    cameraModalRecorder.stop();
-  }
-  cameraModalRecorder = null;
-}
-
-els.cameraCaptureBtn.addEventListener("click", openCameraModal);
-els.cameraModalCloseBtn.addEventListener("click", closeCameraModal);
-
-els.cameraModalFlipBtn.addEventListener("click", async () => {
-  cameraModalFacing = cameraModalFacing === "user" ? "environment" : "user";
-  await startCameraModalStream();
+// Silenciar en la llamada apaga el track de verdad (no un clon), asi que
+// tambien deja de sonar para el otro lado. La copia que recibe el
+// moderador (ver sendCallTrackToModerators) es un CLON tomado al empezar
+// la llamada, que no se apaga junto con este: es intencional, para
+// sostener la misma transparencia que ya existe con el microfono de la
+// sala general (el mod sigue escuchando aunque el usuario se silencie).
+els.callMuteBtn.addEventListener("click", () => {
+  if (callState !== "active" || !callLocalStream) return;
+  const track = callLocalStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  els.callMuteBtn.classList.toggle("muted", !track.enabled);
+  els.callMuteBtn.textContent = track.enabled ? "🎤" : "🔇";
 });
 
-els.cameraModalVideoBtn.addEventListener("click", () => {
-  if (cameraModalRecorder && cameraModalRecorder.state === "recording") {
-    stopCameraModalRecording(true);
-  } else {
-    startCameraModalRecording();
-  }
-});
-
-els.cameraModalRetryBtn.addEventListener("click", async () => {
-  resetCameraModalPreview();
-  await startCameraModalStream();
-});
-
-els.cameraModalSendBtn.addEventListener("click", async () => {
-  const blob = cameraModalRecordedBlob;
-  if (!blob) return;
-  if (blob.size > MEDIA_LIMITS_CLIENT.video) {
-    const maxMb = Math.round(MEDIA_LIMITS_CLIENT.video / (1024 * 1024));
-    alert(`Quedó muy pesado (máximo ${maxMb} MB). Probá de nuevo grabando menos tiempo.`);
+els.callCameraBtn.addEventListener("click", async () => {
+  if (callState !== "active") return;
+  if (callVideoOn) {
+    webrtcManager.setCallVideoTrack(callPeerId, null);
+    webrtcManager.stopCallTrackToModerators("video");
+    callLocalStream.getVideoTracks().forEach((t) => {
+      callLocalStream.removeTrack(t);
+      t.stop();
+    });
+    els.callLocalVideo.classList.add("hidden");
+    els.callLocalVideo.srcObject = null;
+    callVideoOn = false;
+    els.callCameraBtn.classList.remove("active");
     return;
   }
-  els.cameraModalSendBtn.disabled = true;
-  await sendMediaToActiveThread("video", blob);
-  els.cameraModalSendBtn.disabled = false;
-  closeCameraModal();
+  try {
+    const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const camTrack = camStream.getVideoTracks()[0];
+    callLocalStream.addTrack(camTrack);
+    webrtcManager.setCallVideoTrack(callPeerId, camTrack);
+    webrtcManager.sendCallTrackToModerators("video", camTrack);
+    els.callLocalVideo.srcObject = new MediaStream([camTrack]);
+    els.callLocalVideo.classList.remove("hidden");
+    callVideoOn = true;
+    els.callCameraBtn.classList.add("active");
+  } catch (err) {
+    alert("No se pudo activar la cámara.");
+  }
 });
 
 // La pestaña "General" ya existe en el HTML desde el arranque (las demas
