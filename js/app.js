@@ -138,6 +138,22 @@ function playDmSound() {
   player.currentTime = 0;
   player.play().catch(() => {});
 }
+
+// Tono que suena mientras hay una llamada privada entrante, en loop hasta
+// que se acepta/rechaza/cancela. Mismo desbloqueo silencioso que el sonido
+// de mensajes (ver join-form mas abajo).
+let callRingtonePlayer = null;
+function playCallRingtone() {
+  if (!callRingtonePlayer) return;
+  callRingtonePlayer.currentTime = 0;
+  callRingtonePlayer.play().catch(() => {});
+}
+function stopCallRingtone() {
+  if (!callRingtonePlayer) return;
+  callRingtonePlayer.pause();
+  callRingtonePlayer.currentTime = 0;
+}
+
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
 let webrtcManager = null;
 let micOn = false;
@@ -883,7 +899,7 @@ async function joinRoom() {
     callState = "ringing";
     els.callIncomingName.textContent = callPeerName;
     els.callIncomingOverlay.classList.remove("hidden");
-    playDmSound();
+    playCallRingtone();
   });
 
   addRoomListener("call-cancel", (msg) => {
@@ -1026,6 +1042,20 @@ els.joinForm.addEventListener("submit", async (e) => {
         });
       return player;
     });
+    // Mismo desbloqueo silencioso para el tono de llamada entrante.
+    callRingtonePlayer = new Audio("sounds/llamada.mp3");
+    callRingtonePlayer.loop = true;
+    callRingtonePlayer.volume = 0.7;
+    callRingtonePlayer.muted = true;
+    callRingtonePlayer.play()
+      .then(() => {
+        callRingtonePlayer.pause();
+        callRingtonePlayer.currentTime = 0;
+        callRingtonePlayer.muted = false;
+      })
+      .catch(() => {
+        callRingtonePlayer.muted = false;
+      });
   } catch (err) {
     console.warn("No se pudo preparar el audio de avisos:", err);
   }
@@ -1137,6 +1167,7 @@ function resetCallState() {
   els.callLocalVideo.classList.add("hidden");
   resetCallVideoRoles();
   resetCallPanelPosition();
+  stopCallRingtone();
 
   if (callRingTimeout) {
     clearTimeout(callRingTimeout);
@@ -1227,6 +1258,7 @@ async function acceptIncomingCall() {
   if (callState !== "ringing") return;
   const peerId = callPeerId;
   els.callIncomingOverlay.classList.add("hidden");
+  stopCallRingtone();
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
