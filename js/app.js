@@ -1103,6 +1103,7 @@ function resetCallState() {
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
   resetCallVideoRoles();
+  document.removeEventListener("click", tryPlayCallRemoteMedia);
 }
 
 // El video remoto arranca siempre como el grande y el propio como el chico
@@ -1209,14 +1210,36 @@ function handleCallTrack(peerId, stream, track) {
   if (!remoteStream.getTracks().includes(track)) {
     remoteStream.addTrack(track);
   }
-  if (track.kind === "video") {
-    // onmute/onunmute avisan cuando el video empieza/deja de traer cuadros
-    // de verdad: el transceiver de video existe desde el arranque de la
-    // llamada (ver webrtc.js), pero al principio esta "mudo" porque nadie
-    // prendio la camara todavia.
-    track.onunmute = () => els.callPanel.classList.add("has-remote-video");
-    track.onmute = () => els.callPanel.classList.remove("has-remote-video");
-  }
+  // "muted" a nivel WebRTC (distinto de silenciar el microfono) significa
+  // "todavia no esta llegando informacion real de este track" -- arranca
+  // asi siempre hasta que llegue el primer paquete de verdad.
+  track.addEventListener("unmute", () => {
+    console.log(`[NEXUS-CALL] track ${track.kind} de ${peerId} ya trae datos reales (unmute)`);
+    if (track.kind === "video") els.callPanel.classList.add("has-remote-video");
+  });
+  track.addEventListener("mute", () => {
+    console.log(`[NEXUS-CALL] track ${track.kind} de ${peerId} dejo de traer datos (mute)`);
+    if (track.kind === "video") els.callPanel.classList.remove("has-remote-video");
+  });
+  tryPlayCallRemoteMedia();
+}
+
+// Chrome/Edge/Safari bloquean reproducir audio con sonido "solo" (sin un
+// toque reciente del usuario): como el track de la llamada llega de forma
+// asincronica (despues de todo el intercambio de señales), puede que ya no
+// cuente como "reciente". Si el navegador lo bloquea, se reintenta apenas
+// haya cualquier otro toque en la pantalla (silencioso para el usuario, no
+// hace falta avisarle nada mientras funcione).
+function tryPlayCallRemoteMedia() {
+  if (callState !== "active") return; // la llamada ya termino, no hay nada que reproducir
+  const playResult = els.callRemoteVideo.play();
+  if (!playResult?.catch) return;
+  playResult
+    .then(() => console.log("[NEXUS-CALL] audio/video de la llamada reproduciendo"))
+    .catch((err) => {
+      console.warn("[NEXUS-CALL] reproduccion bloqueada por el navegador, se reintenta con el proximo toque:", err.name);
+      document.addEventListener("click", tryPlayCallRemoteMedia, { once: true });
+    });
 }
 
 function handleCallEnded(peerId) {
