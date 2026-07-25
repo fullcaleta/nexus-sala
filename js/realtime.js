@@ -6,6 +6,10 @@
 const PUBLIC_SERVER_URL = "wss://nexus-sala.duckdns.org";
 const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 export const SERVER_URL = isLocal ? "ws://localhost:8080" : PUBLIC_SERVER_URL;
+// Mismo servidor, pero por HTTP normal: lo usa la subida de archivos (ver
+// uploadMedia), que no puede ir por WebSocket por el limite de tamano de
+// mensaje del lado del servidor.
+const UPLOAD_BASE_URL = SERVER_URL.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 
 // Algunas redes (en particular, dispositivos conectados a la misma red que
 // el servidor) a veces fallan al conectar por un problema del router al
@@ -17,6 +21,10 @@ const RETRY_DELAY_MS = 1200;
 const CONNECT_TIMEOUT_MS = 5000;
 
 let ws = null;
+// Prueba, del lado del servidor, que quien sube un archivo por HTTP ya esta
+// conectado por WebSocket a esta sala (ver handleUpload en server.js): ese
+// endpoint no tiene forma de "ver" la conexion de WebSocket por si solo.
+let uploadToken = null;
 const listeners = new Map();
 
 function emit(type, data) {
@@ -67,6 +75,7 @@ function attemptConnect(userId, name, modKey) {
         settled = true;
         clearTimeout(timeout);
         ws = socket;
+        uploadToken = msg.uploadToken || null;
         resolve(msg);
       } else if (msg.type === "name-taken" && !settled) {
         // No tiene sentido reintentar con el mismo nombre: es un rechazo
@@ -146,6 +155,36 @@ export function sendSignal(to, signalType, payload) {
   sendMessage({ type: "signal", to, signalType, payload });
 }
 
+export function sendDmMedia(to, mediaKind, fileId) {
+  sendMessage({ type: "dm-media", to, mediaKind, fileId });
+}
+
+// Sube una imagen/video/audio por HTTP normal (no por WebSocket, ver
+// UPLOAD_BASE_URL mas arriba) y devuelve el identificador que despues viaja
+// en el mensaje "dm-media". El limite de tamano real lo aplica el servidor;
+// esto no valida nada, solo transporta.
+export async function uploadMedia(kind, blob) {
+  if (!uploadToken) throw new Error("Todavía no estás conectado a la sala.");
+  const res = await fetch(`${UPLOAD_BASE_URL}/upload`, {
+    method: "POST",
+    headers: {
+      "X-Upload-Token": uploadToken,
+      "X-Media-Kind": kind,
+      "Content-Type": blob.type,
+    },
+    body: blob,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `No se pudo subir el archivo (error ${res.status}).`);
+  }
+  return res.json();
+}
+
+export function mediaUrl(fileId) {
+  return `${UPLOAD_BASE_URL}/uploads/${encodeURIComponent(fileId)}`;
+}
+
 export function kickUser(targetId) {
   sendMessage({ type: "kick", targetId });
 }
@@ -156,4 +195,5 @@ export function disconnect() {
     ws.close();
     ws = null;
   }
+  uploadToken = null;
 }

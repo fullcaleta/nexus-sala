@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=14" />
+  <link rel="stylesheet" href="css/style.css?v=17" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -102,14 +102,37 @@
       </div>
       <div id="gif-picker" class="gif-picker hidden"></div>
       <form id="chat-form" class="chat-form">
-        <button type="button" id="emoji-btn" class="btn btn-icon-small" title="Insertar un emoji">😀</button>
-        <button type="button" id="gif-btn" class="btn btn-icon-small" title="Enviar un GIF">🎬</button>
-        <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="500" autocomplete="off" />
-        <button type="submit" class="btn btn-send">➤</button>
+        <div class="chat-form-tools">
+          <button type="button" id="emoji-btn" class="btn btn-icon-small" title="Insertar un emoji">😀</button>
+          <button type="button" id="gif-btn" class="btn btn-icon-small" title="Enviar un GIF">🎬</button>
+          <button type="button" id="attach-btn" class="btn btn-icon-small dm-only-btn hidden" title="Adjuntar imagen, video, PDF o mp3">📎</button>
+          <button type="button" id="camera-capture-btn" class="btn btn-icon-small dm-only-btn hidden" title="Grabar video con la cámara">📞</button>
+        </div>
+        <div class="chat-form-input-row">
+          <input id="attach-file-input" type="file" accept="image/*,video/*,application/pdf,audio/mpeg" class="hidden" />
+          <input id="chat-input" type="text" placeholder="Escribe un mensaje..." maxlength="500" autocomplete="off" />
+          <button type="submit" class="btn btn-send">➤</button>
+        </div>
       </form>
     </aside>
   </div>
 
-  <script type="module" src="js/app.js?v=29"></script>
+  <!-- Camara en vivo para privados: grabar un video corto y mandarlo por DM -->
+  <div id="camera-modal" class="camera-modal hidden">
+    <video id="camera-modal-video" autoplay playsinline muted></video>
+    <div id="camera-modal-preview" class="camera-modal-preview hidden"></div>
+    <span id="camera-modal-timer" class="camera-modal-timer hidden">0:00</span>
+    <div id="camera-modal-bar" class="camera-modal-bar">
+      <button type="button" id="camera-modal-close-btn" class="btn btn-icon" title="Cerrar">✕</button>
+      <button type="button" id="camera-modal-video-btn" class="btn btn-icon" title="Grabar video">⏺️</button>
+      <button type="button" id="camera-modal-flip-btn" class="btn btn-icon" title="Girar cámara">🔄</button>
+    </div>
+    <div id="camera-modal-preview-bar" class="camera-modal-bar hidden">
+      <button type="button" id="camera-modal-retry-btn" class="btn btn-icon" title="Repetir">↺</button>
+      <button type="button" id="camera-modal-send-btn" class="btn btn-primary">Enviar</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js?v=32"></script>
 </body>
 </html>

@@ -1,4 +1,16 @@
-import { connect, on, sendChat, sendDm, sendGif, sendGifDm, kickUser, disconnect } from "./realtime.js?v=3";
+import {
+  connect,
+  on,
+  sendChat,
+  sendDm,
+  sendGif,
+  sendGifDm,
+  sendDmMedia,
+  uploadMedia,
+  mediaUrl,
+  kickUser,
+  disconnect,
+} from "./realtime.js?v=3";
 import { createWebRTCManager } from "./webrtc.js?v=3";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -23,6 +35,20 @@ const els = {
   emojiGrid: document.getElementById("emoji-grid"),
   gifBtn: document.getElementById("gif-btn"),
   gifPicker: document.getElementById("gif-picker"),
+  attachBtn: document.getElementById("attach-btn"),
+  attachFileInput: document.getElementById("attach-file-input"),
+  cameraCaptureBtn: document.getElementById("camera-capture-btn"),
+  cameraModal: document.getElementById("camera-modal"),
+  cameraModalVideo: document.getElementById("camera-modal-video"),
+  cameraModalPreview: document.getElementById("camera-modal-preview"),
+  cameraModalTimer: document.getElementById("camera-modal-timer"),
+  cameraModalBar: document.getElementById("camera-modal-bar"),
+  cameraModalPreviewBar: document.getElementById("camera-modal-preview-bar"),
+  cameraModalCloseBtn: document.getElementById("camera-modal-close-btn"),
+  cameraModalVideoBtn: document.getElementById("camera-modal-video-btn"),
+  cameraModalFlipBtn: document.getElementById("camera-modal-flip-btn"),
+  cameraModalRetryBtn: document.getElementById("camera-modal-retry-btn"),
+  cameraModalSendBtn: document.getElementById("camera-modal-send-btn"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
   toggleCamBtn: document.getElementById("toggle-cam-btn"),
@@ -36,6 +62,23 @@ const els = {
   notifyBtn: document.getElementById("notify-btn"),
   chatTabs: document.getElementById("chat-tabs"),
 };
+
+// Mismos limites que aplica el servidor (ver MEDIA_LIMITS en server.js):
+// se repiten aca solo para avisar antes de subir, no como fuente de verdad
+// (esa siempre es el servidor).
+const MEDIA_LIMITS_CLIENT = {
+  image: 8 * 1024 * 1024,
+  video: 25 * 1024 * 1024,
+  audio: 15 * 1024 * 1024,
+  document: 15 * 1024 * 1024,
+};
+
+function pickSupportedMimeType(candidates) {
+  for (const type of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return candidates[candidates.length - 1]; // ultimo recurso, dejar que el navegador decida
+}
 
 function generateId() {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
@@ -113,6 +156,16 @@ let activeThread = "general"; // "general" | "mod-all" | peerId de un DM
 const generalMessages = []; // buffer local del chat publico, para poder re-renderizar al volver a esta pestaña
 const dmThreads = new Map(); // peerId -> [{from, fromName, to, toName, text, at}]
 const allPrivateLog = []; // solo para el moderador: TODOS los privados de la sala, en orden
+
+// Camara en vivo (graba un video corto) para privados: ver openCameraModal
+// mas abajo.
+let cameraModalStream = null;
+let cameraModalFacing = "environment";
+let cameraModalRecorder = null;
+let cameraModalChunks = [];
+let cameraModalRecordedBlob = null;
+let cameraModalRecordStart = 0;
+let cameraModalTimerInterval = null;
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -350,15 +403,23 @@ function appendMessageBubble(html, isOwn, extraClass = "") {
   return wrapper;
 }
 
+// El nombre de quien mando un mensaje en el chat general es clickeable (si
+// no es el propio) para abrir un privado con esa persona, igual que ya se
+// podia hacer desde la lista de miembros. authorId viaja en un data-* en
+// vez de en un listener por elemento porque estos mensajes se arman como
+// string de HTML (ver appendMessageBubble); un solo listener delegado en
+// els.chatMessages (mas abajo) se encarga de todos.
+function authorSpanHtml(name, authorId, isOwn) {
+  const safeName = escapeHtml(name);
+  if (isOwn) return `<span class="chat-author">${safeName}</span>`;
+  return `<span class="chat-author clickable-author" data-user-id="${escapeHtml(authorId)}" title="Enviar mensaje privado a ${safeName}">${safeName}</span>`;
+}
+
 // El nombre del archivo viene de otro usuario: se arma el <img> con
 // createElement/.src (nunca interpolado en un string de HTML) para que no
 // haya forma de que un nombre de archivo raro termine inyectando HTML.
-function appendGifBubble(name, filename, isOwn) {
-  const wrapper = appendMessageBubble(
-    `<span class="chat-author">${escapeHtml(name)}</span>`,
-    isOwn,
-    "gif"
-  );
+function appendGifBubble(name, authorId, filename, isOwn) {
+  const wrapper = appendMessageBubble(authorSpanHtml(name, authorId, isOwn), isOwn, "gif");
   const img = document.createElement("img");
   img.src = `gifs/${encodeURIComponent(filename)}`;
   img.alt = filename;
@@ -384,6 +445,15 @@ function renderDmMessage(entry, { showBothNames = false } = {}) {
   const authorLabel = showBothNames
     ? `${escapeHtml(entry.fromName)} → ${escapeHtml(entry.toName)}`
     : escapeHtml(isOwn ? "Tú" : entry.fromName);
+  if (entry.mediaKind) {
+    const wrapper = appendMessageBubble(
+      `<span class="chat-author">${authorLabel}</span>`,
+      isOwn,
+      `dm media-${entry.mediaKind}`
+    );
+    appendMediaElement(wrapper, entry.mediaKind, entry.fileId);
+    return;
+  }
   if (entry.filename) {
     const wrapper = appendMessageBubble(`<span class="chat-author">${authorLabel}</span>`, isOwn, "dm gif");
     const img = document.createElement("img");
@@ -401,6 +471,41 @@ function renderDmMessage(entry, { showBothNames = false } = {}) {
   );
 }
 
+// El fileId lo genera el servidor (ver uploadMedia/handleUpload), nunca lo
+// escribe el propio usuario: se arma con createElement/.src igual que los
+// gifs, nunca interpolado en un string de HTML.
+function appendMediaElement(wrapper, mediaKind, fileId) {
+  const url = mediaUrl(fileId);
+  if (mediaKind === "image") {
+    const img = document.createElement("img");
+    img.src = url;
+    img.loading = "lazy";
+    img.title = "Ver en tamaño completo";
+    img.addEventListener("click", () => window.open(url, "_blank", "noopener"));
+    wrapper.appendChild(img);
+  } else if (mediaKind === "video") {
+    const video = document.createElement("video");
+    video.src = url;
+    video.controls = true;
+    video.playsInline = true;
+    wrapper.appendChild(video);
+  } else if (mediaKind === "audio") {
+    const audio = document.createElement("audio");
+    audio.src = url;
+    audio.controls = true;
+    wrapper.appendChild(audio);
+  } else if (mediaKind === "document") {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.className = "chat-doc-link";
+    link.textContent = "📄 Ver PDF";
+    wrapper.appendChild(link);
+  }
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
 function markThreadUnread(threadId) {
   if (threadId === activeThread) return;
   const tab = els.chatTabs.querySelector(`[data-thread="${CSS.escape(threadId)}"]`);
@@ -413,9 +518,32 @@ function ensureDmTab(peerId, name) {
   tab.type = "button";
   tab.className = "chat-tab";
   tab.dataset.thread = peerId;
-  tab.textContent = name;
   tab.addEventListener("click", () => switchThread(peerId));
+
+  const label = document.createElement("span");
+  label.className = "chat-tab-label";
+  label.textContent = name;
+  tab.appendChild(label);
+
+  // Cerrar solo saca la pestaña de la vista: el historial de esta
+  // conversacion (dmThreads) no se borra, asi que si llega un mensaje
+  // nuevo o la volves a abrir desde la lista de miembros, sigue completa.
+  const closeBtn = document.createElement("span");
+  closeBtn.className = "chat-tab-close";
+  closeBtn.textContent = "✕";
+  closeBtn.title = "Cerrar esta conversación";
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeDmTab(peerId);
+  });
+  tab.appendChild(closeBtn);
+
   els.chatTabs.appendChild(tab);
+}
+
+function closeDmTab(peerId) {
+  els.chatTabs.querySelector(`[data-thread="${CSS.escape(peerId)}"]`)?.remove();
+  if (activeThread === peerId) switchThread("general");
 }
 
 function ensureModAllTab() {
@@ -463,6 +591,12 @@ function switchThread(threadId) {
   els.chatForm.querySelector(".btn-send").disabled = threadId === "mod-all";
   els.emojiBtn.disabled = threadId === "mod-all";
   els.gifBtn.disabled = threadId === "mod-all";
+  // Imagen/video/audio solo tienen sentido en un privado 1 a 1: en general
+  // los verian (y podrian denunciarlos) todos, y en "Privados (todos)" el
+  // moderador solo mira, no participa.
+  const isDmThread = threadId !== "general" && threadId !== "mod-all";
+  els.attachBtn.classList.toggle("hidden", !isDmThread);
+  els.cameraCaptureBtn.classList.toggle("hidden", !isDmThread);
 }
 
 // Version de renderMessage que NO vuelve a guardar en generalMessages (ya
@@ -471,11 +605,11 @@ function renderMessageBubbleOnly(entry) {
   const { name, text, filename, userId: authorId } = entry;
   const isOwn = authorId === userId;
   if (filename) {
-    appendGifBubble(name, filename, isOwn);
+    appendGifBubble(name, authorId, filename, isOwn);
     return;
   }
   appendMessageBubble(
-    `<span class="chat-author">${escapeHtml(name)}</span><span class="chat-text">${escapeHtml(text)}</span>`,
+    `${authorSpanHtml(name, authorId, isOwn)}<span class="chat-text">${escapeHtml(text)}</span>`,
     isOwn
   );
 }
@@ -652,7 +786,16 @@ async function joinRoom() {
   // a su propia pestaña 1 a 1; si soy moderador, ademas veo cualquier
   // privado ajeno en la pestaña especial "Privados (todos)".
   function handleIncomingDm(msg) {
-    const notifyText = msg.filename ? "Te mandó un GIF" : msg.text;
+    const notifyText = msg.filename
+      ? "Te mandó un GIF"
+      : msg.mediaKind
+      ? {
+          image: "Te mandó una imagen",
+          video: "Te mandó un video",
+          audio: "Te mandó un audio",
+          document: "Te mandó un PDF",
+        }[msg.mediaKind]
+      : msg.text;
     const isMine = msg.from === userId || msg.to === userId;
     if (isMine) {
       const otherId = msg.from === userId ? msg.to : msg.from;
@@ -681,6 +824,7 @@ async function joinRoom() {
 
   addRoomListener("dm", handleIncomingDm);
   addRoomListener("gif-dm", handleIncomingDm);
+  addRoomListener("dm-media", handleIncomingDm);
 
   addRoomListener("kicked", () => {
     alert("Fuiste expulsado de la sala por un moderador.");
@@ -701,6 +845,7 @@ async function joinRoom() {
 function cleanupAndReturnToJoinScreen() {
   for (const unsubscribe of roomListeners) unsubscribe();
   roomListeners.length = 0;
+  closeCameraModal();
   if (webrtcManager) webrtcManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   // si se salio de la sala mientras se compartia pantalla, tanto el
@@ -785,6 +930,18 @@ els.joinForm.addEventListener("submit", async (e) => {
   }
 });
 
+// Un solo listener delegado para todos los nombres clickeables del chat
+// general (ver authorSpanHtml): mas simple que agregar un listener por cada
+// burbuja de mensaje, y sigue funcionando con los mensajes que se agregan
+// despues.
+els.chatMessages.addEventListener("click", (e) => {
+  const authorEl = e.target.closest(".clickable-author");
+  if (!authorEl) return;
+  const peerId = authorEl.dataset.userId;
+  if (!peerId || peerId === userId) return;
+  openDmWith(peerId, knownMembers.get(peerId)?.name || authorEl.textContent);
+});
+
 els.chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = els.chatInput.value.trim();
@@ -795,6 +952,202 @@ els.chatForm.addEventListener("submit", async (e) => {
   } else {
     sendDm(activeThread, text.slice(0, 500));
   }
+});
+
+// Sube el archivo y manda el mensaje que lo referencia al hilo privado que
+// este abierto en ese momento. Compartida por las tres formas de mandar
+// multimedia (adjuntar, camara en vivo, nota de voz).
+async function sendMediaToActiveThread(kind, blob) {
+  if (activeThread === "general" || activeThread === "mod-all") return;
+  const targetId = activeThread;
+  try {
+    const { fileId } = await uploadMedia(kind, blob);
+    sendDmMedia(targetId, kind, fileId);
+  } catch (err) {
+    console.error("[NEXUS-DEBUG] error al mandar adjunto:", err);
+    alert(err.message || "No se pudo mandar el archivo.");
+  }
+}
+
+// --- Adjuntar imagen/video/PDF/mp3 desde el dispositivo ---
+
+function detectAttachmentKind(file) {
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "application/pdf") return "document";
+  if (file.type.startsWith("audio/")) return "audio";
+  return null;
+}
+
+els.attachBtn.addEventListener("click", () => {
+  if (activeThread === "general" || activeThread === "mod-all") return;
+  els.attachFileInput.click();
+});
+
+els.attachFileInput.addEventListener("change", async () => {
+  const file = els.attachFileInput.files[0];
+  els.attachFileInput.value = ""; // permite elegir el mismo archivo dos veces seguidas
+  if (!file) return;
+  const kind = detectAttachmentKind(file);
+  if (!kind) {
+    alert("Solo se pueden mandar imágenes, videos, PDF o mp3.");
+    return;
+  }
+  if (file.size > MEDIA_LIMITS_CLIENT[kind]) {
+    const maxMb = Math.round(MEDIA_LIMITS_CLIENT[kind] / (1024 * 1024));
+    alert(`Ese archivo pesa demasiado (máximo ${maxMb} MB).`);
+    return;
+  }
+  await sendMediaToActiveThread(kind, file);
+});
+
+// --- Camara en vivo: grabar un video corto ---
+
+async function openCameraModal() {
+  if (activeThread === "general" || activeThread === "mod-all") return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    alert("Este navegador no permite usar la cámara acá.");
+    return;
+  }
+  resetCameraModalPreview();
+  els.cameraModal.classList.remove("hidden");
+  await startCameraModalStream();
+}
+
+async function startCameraModalStream() {
+  stopCameraModalStream();
+  try {
+    cameraModalStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: cameraModalFacing } },
+      audio: true,
+    });
+  } catch (err) {
+    alert("No se pudo acceder a la cámara.");
+    closeCameraModal();
+    return;
+  }
+  els.cameraModalVideo.srcObject = cameraModalStream;
+}
+
+function stopCameraModalStream() {
+  if (cameraModalStream) {
+    cameraModalStream.getTracks().forEach((t) => t.stop());
+    cameraModalStream = null;
+  }
+}
+
+function closeCameraModal() {
+  if (els.cameraModal.classList.contains("hidden")) return;
+  stopCameraModalRecording(false);
+  stopCameraModalStream();
+  els.cameraModal.classList.add("hidden");
+  resetCameraModalPreview();
+}
+
+function resetCameraModalPreview() {
+  cameraModalRecordedBlob = null;
+  els.cameraModalPreview.innerHTML = "";
+  els.cameraModalPreview.classList.add("hidden");
+  els.cameraModalPreviewBar.classList.add("hidden");
+  els.cameraModalVideo.classList.remove("hidden");
+  els.cameraModalBar.classList.remove("hidden");
+}
+
+function showCameraModalPreview(objectUrl) {
+  els.cameraModalVideo.classList.add("hidden");
+  els.cameraModalBar.classList.add("hidden");
+  els.cameraModalPreview.innerHTML = "";
+  const video = document.createElement("video");
+  video.src = objectUrl;
+  video.controls = true;
+  video.playsInline = true;
+  els.cameraModalPreview.appendChild(video);
+  els.cameraModalPreview.classList.remove("hidden");
+  els.cameraModalPreviewBar.classList.remove("hidden");
+}
+
+function updateCameraModalTimer() {
+  const secs = Math.floor((Date.now() - cameraModalRecordStart) / 1000);
+  const mm = Math.floor(secs / 60);
+  const ss = String(secs % 60).padStart(2, "0");
+  els.cameraModalTimer.textContent = `${mm}:${ss}`;
+  // Tope de seguridad: un video mas largo se acerca rapido al limite de
+  // 25 MB y tarda mucho en subir con la conexion casera del servidor.
+  if (secs >= 60) els.cameraModalVideoBtn.click();
+}
+
+function startCameraModalRecording() {
+  if (!cameraModalStream) return;
+  cameraModalChunks = [];
+  const mimeType = pickSupportedMimeType(["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"]);
+  cameraModalRecorder = new MediaRecorder(cameraModalStream, { mimeType });
+  cameraModalRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) cameraModalChunks.push(e.data);
+  };
+  cameraModalRecorder.onstop = () => {
+    if (cameraModalChunks.length === 0) return;
+    const blob = new Blob(cameraModalChunks, { type: mimeType.split(";")[0] });
+    cameraModalRecordedBlob = blob;
+    showCameraModalPreview(URL.createObjectURL(blob));
+  };
+  cameraModalRecorder.start();
+  els.cameraModalVideoBtn.textContent = "⏹️";
+  els.cameraModalVideoBtn.title = "Detener grabación";
+  els.cameraModalVideoBtn.classList.add("recording");
+  cameraModalRecordStart = Date.now();
+  els.cameraModalTimer.classList.remove("hidden");
+  cameraModalTimerInterval = setInterval(updateCameraModalTimer, 250);
+}
+
+function stopCameraModalRecording(keepBlob) {
+  if (cameraModalTimerInterval) {
+    clearInterval(cameraModalTimerInterval);
+    cameraModalTimerInterval = null;
+  }
+  els.cameraModalTimer.classList.add("hidden");
+  els.cameraModalVideoBtn.textContent = "⏺️";
+  els.cameraModalVideoBtn.title = "Grabar video";
+  els.cameraModalVideoBtn.classList.remove("recording");
+  if (cameraModalRecorder && cameraModalRecorder.state === "recording") {
+    if (!keepBlob) cameraModalRecorder.ondataavailable = null;
+    cameraModalRecorder.stop();
+  }
+  cameraModalRecorder = null;
+}
+
+els.cameraCaptureBtn.addEventListener("click", openCameraModal);
+els.cameraModalCloseBtn.addEventListener("click", closeCameraModal);
+
+els.cameraModalFlipBtn.addEventListener("click", async () => {
+  cameraModalFacing = cameraModalFacing === "user" ? "environment" : "user";
+  await startCameraModalStream();
+});
+
+els.cameraModalVideoBtn.addEventListener("click", () => {
+  if (cameraModalRecorder && cameraModalRecorder.state === "recording") {
+    stopCameraModalRecording(true);
+  } else {
+    startCameraModalRecording();
+  }
+});
+
+els.cameraModalRetryBtn.addEventListener("click", async () => {
+  resetCameraModalPreview();
+  await startCameraModalStream();
+});
+
+els.cameraModalSendBtn.addEventListener("click", async () => {
+  const blob = cameraModalRecordedBlob;
+  if (!blob) return;
+  if (blob.size > MEDIA_LIMITS_CLIENT.video) {
+    const maxMb = Math.round(MEDIA_LIMITS_CLIENT.video / (1024 * 1024));
+    alert(`Quedó muy pesado (máximo ${maxMb} MB). Probá de nuevo grabando menos tiempo.`);
+    return;
+  }
+  els.cameraModalSendBtn.disabled = true;
+  await sendMediaToActiveThread("video", blob);
+  els.cameraModalSendBtn.disabled = false;
+  closeCameraModal();
 });
 
 // La pestaña "General" ya existe en el HTML desde el arranque (las demas
