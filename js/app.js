@@ -1115,6 +1115,8 @@ function resetCallState() {
   resetCallVideoRoles();
   document.removeEventListener("click", tryPlayCallRemoteMedia);
   callRemoteTracks.clear();
+  callPlayInFlight = false;
+  callPlayRetryNeeded = false;
 }
 
 // El video remoto arranca siempre como el grande y el propio como el chico
@@ -1241,22 +1243,39 @@ function scheduleCallRemoteStreamUpdate() {
   });
 }
 
+// Hay varios momentos que pueden avisar "probá reproducir ahora" (llego un
+// track, la conexion quedo conectada, el propio <video> avisa
+// loadedmetadata/canplay) y algunos pueden pisarse entre si si se disparan
+// casi juntos: pedirle play() al <video> mientras ya hay un play() anterior
+// sin resolver cancela ese anterior con un AbortError. callPlayInFlight
+// evita mandar un segundo pedido mientras el primero sigue en curso -- si
+// llega otro aviso mientras tanto, se guarda y se reintenta recien cuando
+// el actual termine (resuelva o falle), nunca en paralelo.
+let callPlayInFlight = false;
+let callPlayRetryNeeded = false;
+
 // Chrome/Edge/Safari bloquean reproducir audio con sonido "solo" (sin un
 // toque reciente del usuario): como el track de la llamada llega de forma
 // asincronica (despues de todo el intercambio de señales), puede que ya no
-// cuente como "reciente". Si el navegador lo bloquea, se reintenta apenas
-// haya cualquier otro toque en la pantalla (silencioso para el usuario, no
-// hace falta avisarle nada mientras funcione).
+// cuente como "reciente". Si el navegador lo bloquea de verdad, se
+// reintenta apenas haya cualquier otro toque en la pantalla.
 function tryPlayCallRemoteMedia() {
   if (callState !== "active") return; // la llamada ya termino, no hay nada que reproducir
+  if (callPlayInFlight) {
+    callPlayRetryNeeded = true;
+    return;
+  }
+  callPlayInFlight = true;
   let playResult;
   try {
     playResult = els.callRemoteVideo.play();
   } catch (err) {
+    callPlayInFlight = false;
     console.warn("[NEXUS-CALL] play() tiro un error de una:", err);
     return;
   }
   if (!playResult?.catch) {
+    callPlayInFlight = false;
     console.warn("[NEXUS-CALL] play() no devolvio una promesa (raro):", playResult);
     return;
   }
@@ -1264,15 +1283,21 @@ function tryPlayCallRemoteMedia() {
     .then(() => console.log("[NEXUS-CALL] audio/video de la llamada reproduciendo"))
     .catch((err) => {
       if (err.name === "AbortError") {
-        // No es un bloqueo de verdad: alguien reasigno la fuente (llego
-        // otro track) mientras este play() todavia estaba en curso. Se
-        // reintenta enseguida, no hace falta esperar un toque.
-        console.log("[NEXUS-CALL] play() interrumpido por un track nuevo, reintentando ya mismo");
-        tryPlayCallRemoteMedia();
+        // No es un bloqueo de verdad: se pidio reproducir de nuevo antes de
+        // que este pedido terminara. callPlayRetryNeeded ya va a disparar
+        // el reintento apenas se libere callPlayInFlight, aca abajo.
+        console.log("[NEXUS-CALL] play() interrumpido por otro pedido, se reintenta solo");
         return;
       }
       console.warn("[NEXUS-CALL] reproduccion bloqueada por el navegador, se reintenta con el proximo toque:", err.name);
       document.addEventListener("click", tryPlayCallRemoteMedia, { once: true });
+    })
+    .finally(() => {
+      callPlayInFlight = false;
+      if (callPlayRetryNeeded) {
+        callPlayRetryNeeded = false;
+        tryPlayCallRemoteMedia();
+      }
     });
 }
 
