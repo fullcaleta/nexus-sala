@@ -274,30 +274,18 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   label.className = "video-tile-label";
   label.textContent = isSelf ? `${name} (tú${isModerator ? " · invisible" : ""})` : name;
 
-  // "let", no "const": en iOS a veces hace falta reemplazar este boton por
-  // un nodo nuevo (ver webkitendfullscreen mas abajo), asi que la variable
-  // tiene que poder apuntar a ese reemplazo despues.
-  let fullscreenBtn = document.createElement("button");
+  // "Agrandar" NO pide pantalla completa real al sistema operativo: solo
+  // crece el recuadro dentro de la misma pagina con una clase CSS (mismo
+  // truco que "agrandar la llamada" y "agrandar el chat"). Se probo pedir
+  // pantalla completa de verdad (Element.requestFullscreen /
+  // webkitEnterFullscreen) y, en iPhone 7, el boton de volver a achicar
+  // quedaba invisible de forma persistente despues de salir (varios
+  // intentos de repintarlo o reemplazarlo no lo solucionaron) -- este
+  // enfoque evita ese problema de raiz, ademas de funcionar igual en
+  // cualquier dispositivo.
+  const fullscreenBtn = document.createElement("button");
   function handleFullscreenBtnClick() {
-    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-    if (fsEl === tile || fsEl === video) {
-      if (document.exitFullscreen) document.exitFullscreen();
-      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-      return;
-    }
-    // iOS/Safari viejo con webkitEnterFullscreen (ver enterFullscreen mas
-    // abajo) no pasa por document.fullscreenElement: esta propiedad aparte
-    // (webkitDisplayingFullscreen) es la que avisa si ESE video puntual
-    // esta en su pantalla completa nativa, y su salida es un metodo propio
-    // del <video>, no de document.
-    if (video.webkitDisplayingFullscreen) {
-      video.webkitExitFullscreen?.();
-      return;
-    }
-    // Adelantado al propio clic (ver donde se define mas abajo): en iOS,
-    // desmutear por codigo solo funciona bien dentro del toque directo.
-    video._handoffToNativeFullscreenAudio?.();
-    enterFullscreen(tile, video);
+    tile.classList.toggle("video-tile-maximized");
   }
   fullscreenBtn.className = "video-tile-fullscreen-btn";
   fullscreenBtn.type = "button";
@@ -330,50 +318,6 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // onRemoteStream en la funcion que llama a createVideoTile): antes de
     // eso no hay audio que enrutar.
     let gainNode = null;
-    // Mientras el iPhone/iPad esta en su pantalla completa nativa (unico
-    // metodo posible en Safari viejo, ver enterFullscreen), su propio
-    // reproductor trae un boton de volumen/mute -- pero como el audio real
-    // pasa por Web Audio, ese boton nativo no hacia nada, y si el usuario
-    // lo tocaba para "desmutear" el <video>, se escuchaba doble. En vez de
-    // bloquearlo, se le cede el control real mientras dure: se apaga
-    // nuestra mezcla (gain a 0) y se deja sonar al <video> nativo, asi el
-    // boton nativo si mutea/desmutea de verdad. Al salir de esa pantalla
-    // completa se vuelve a nuestro control de siempre.
-    let inNativeFullscreen = false;
-    // Se expone para poder llamarla synchronicamente desde el propio clic
-    // del boton de pantalla completa (ver mas abajo): en iOS, desmutear un
-    // <video> por codigo solo funciona bien si pasa dentro del toque
-    // directo del usuario, no un instante despues cuando recien avisa el
-    // evento "ya entre a pantalla completa" -- por eso esta misma funcion
-    // se llama en los dos momentos (el clic, como adelanto, y el evento,
-    // como respaldo si por algo no se pudo antes).
-    video._handoffToNativeFullscreenAudio = () => {
-      if (inNativeFullscreen) return;
-      inNativeFullscreen = true;
-      video.muted = false;
-      if (gainNode) gainNode.gain.value = 0;
-    };
-    video.addEventListener("volumechange", () => {
-      if (!inNativeFullscreen && !video.muted) video.muted = true;
-    });
-    video.addEventListener("webkitbeginfullscreen", video._handoffToNativeFullscreenAudio);
-    video.addEventListener("webkitendfullscreen", () => {
-      inNativeFullscreen = false;
-      video.muted = true;
-      if (gainNode) gainNode.gain.value = Number(volumeControl.value);
-      // Bug conocido de WebKit/iOS: al salir de su pantalla completa
-      // nativa, a veces deja de "pintar" los botones que quedaban encima
-      // del video (siguen ahi y funcionan -- responden al toque -- pero no
-      // se ven). Ya se probo forzar un reflow y un cambio de opacity, sin
-      // resultado: la unica forma realmente confiable de sacarlo de ese
-      // estado "pintado viejo" es reemplazarlo por un nodo nuevo (un
-      // elemento recien creado no puede tener una capa de composicion
-      // vieja).
-      const freshBtn = fullscreenBtn.cloneNode(true);
-      freshBtn.addEventListener("click", handleFullscreenBtnClick);
-      fullscreenBtn.replaceWith(freshBtn);
-      fullscreenBtn = freshBtn;
-    });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
     });
@@ -400,39 +344,13 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       // vivo.
       const source = ctx.createMediaStreamSource(stream);
       gainNode = ctx.createGain();
-      gainNode.gain.value = inNativeFullscreen ? 0 : Number(volumeControl.value);
+      gainNode.gain.value = Number(volumeControl.value);
       source.connect(gainNode).connect(ctx.destination);
     };
   }
 
   els.videoGrid.appendChild(tile);
   return video;
-}
-
-// Safari/iOS no soporta el pedido de pantalla completa estandar sobre
-// cualquier elemento: hay que pedirlo directo sobre el <video> con su
-// propio metodo. Se prueban los tres en orden segun lo que soporte cada
-// navegador.
-// Se pide pantalla completa sobre el RECUADRO entero (tileEl), no sobre el
-// <video> directamente: cuando un <video> entra en pantalla completa por si
-// solo, varios navegadores (Chrome sobre todo) le agregan sus propios
-// controles nativos encima, incluido un control de volumen que no tiene
-// ninguna conexion con el nuestro (el audio real pasa por Web Audio API,
-// no por el volumen nativo del <video>) y por eso no hacia nada. Poniendo
-// en pantalla completa el contenedor en vez del video evita que el
-// navegador agregue esos controles. El unico caso que sigue necesitando el
-// <video> directamente es el metodo propio de iOS/Safari viejo
-// (webkitEnterFullscreen), que no funciona sobre un div generico -- ahi no
-// hay forma de evitar los controles nativos del sistema, es una limitacion
-// de esa plataforma.
-function enterFullscreen(tileEl, videoEl) {
-  if (tileEl.requestFullscreen) {
-    tileEl.requestFullscreen();
-  } else if (tileEl.webkitRequestFullscreen) {
-    tileEl.webkitRequestFullscreen();
-  } else if (videoEl.webkitEnterFullscreen) {
-    videoEl.webkitEnterFullscreen();
-  }
 }
 
 function removeVideoTile(peerId) {

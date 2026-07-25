@@ -348,31 +348,29 @@ body {
   background: #0d0c16;
 }
 
-/* La pantalla completa se pide sobre el recuadro entero (ver enterFullscreen
-   en app.js), no sobre el <video> solo -- asi el navegador no le agrega sus
-   propios controles nativos encima (con un volumen que no tiene conexion
-   con el nuestro). Dentro del recuadro chico, "cover" recorta los bordes
-   para llenar el marco (se ve bien con una cara); en pantalla completa eso
-   cortaria contenido real (por ejemplo el borde de una pantalla
-   compartida), asi que ahi se muestra todo sin recortar. La etiqueta con el
-   nombre y el control de volumen propio se siguen viendo encima, ahora
-   utilizables tambien en pantalla completa. */
-.video-tile:fullscreen,
-.video-tile:-webkit-full-screen {
+/* "Agrandar" no pide pantalla completa real al sistema operativo (ver
+   handleFullscreenBtnClick en app.js): solo crece dentro de la misma
+   pagina con esta clase, mismo truco que ya usan "agrandar la llamada" y
+   "agrandar el chat". Se probo pedir pantalla completa nativa antes, pero
+   en iPhone 7 el boton de volver a achicar quedaba invisible de forma
+   persistente al salir; este enfoque lo evita de raiz. Dentro del recuadro
+   chico, "cover" recorta los bordes para llenar el marco (se ve bien con
+   una cara); agrandado eso cortaria contenido real (por ejemplo el borde
+   de una pantalla compartida), asi que ahi se muestra todo sin recortar. */
+.video-tile.video-tile-maximized {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
   background: #000;
   border-radius: 0;
   width: 100vw;
-  height: 100vh;
+  height: 100vh; /* respaldo para navegadores viejos que no entienden dvh */
+  height: 100dvh;
 }
 
-.video-tile:fullscreen video,
-.video-tile:-webkit-full-screen video {
+.video-tile.video-tile-maximized video {
   object-fit: contain;
 }
-
-/* Se deja visible tambien en pantalla completa (antes se ocultaba, dando a
-   entender que no se podia volver a achicar la ventana): el mismo boton
-   ahora sirve para salir tambien (ver el click en app.js). */
 
 /* Efecto espejo solo para tu propia vista previa (como te ves al mirarte a
    un espejo, con cualquiera de las dos camaras). Los demas participantes
