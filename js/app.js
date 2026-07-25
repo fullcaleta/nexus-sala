@@ -314,6 +314,13 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       inNativeFullscreen = false;
       video.muted = true;
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
+      // Bug conocido de WebKit/iOS: al salir de su pantalla completa
+      // nativa, a veces no vuelve a "pintar" los botones que quedaban
+      // encima del video (siguen ahi y funcionan, pero quedan invisibles).
+      // Sacarlo y volver a ponerlo fuerza a que se repinte.
+      fullscreenBtn.style.display = "none";
+      void fullscreenBtn.offsetHeight; // fuerza el reflow
+      fullscreenBtn.style.display = "";
     });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
