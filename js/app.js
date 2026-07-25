@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=4";
-import { createWebRTCManager } from "./webrtc.js?v=6";
+import { createWebRTCManager } from "./webrtc.js?v=7";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -748,15 +748,6 @@ async function joinRoom() {
       track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
     },
     onCallTrack: handleCallTrack,
-    onCallConnected: (peerId) => {
-      if (peerId !== callPeerId || callState !== "active") return;
-      // Reintento extra apenas la conexion de la llamada esta realmente
-      // lista: los intentos de reproducir que se disparan apenas llega
-      // cada track pueden pisarse entre si si audio y video llegan casi
-      // juntos (ver AbortError en tryPlayCallRemoteMedia). Este, en
-      // cambio, pasa cuando ya no hay nada mas por negociar.
-      tryPlayCallRemoteMedia();
-    },
     onCallEnded: handleCallEnded,
     isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
@@ -1113,10 +1104,11 @@ function resetCallState() {
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
   resetCallVideoRoles();
-  document.removeEventListener("click", tryPlayCallRemoteMedia);
   callRemoteTracks.clear();
-  callPlayInFlight = false;
-  callPlayRetryNeeded = false;
+  if (callGainNode) {
+    callGainNode.disconnect();
+    callGainNode = null;
+  }
 }
 
 // El video remoto arranca siempre como el grande y el propio como el chico
@@ -1207,98 +1199,37 @@ function handleCallTrack(peerId, stream, track) {
     );
     return;
   }
-  console.log(`[NEXUS-CALL-DEBUG] handleCallTrack kind=${track.kind} de ${peerId}`);
+  console.log(`[NEXUS-CALL] track recibido de ${peerId}: ${track.kind}`);
+  if (track.kind === "audio") {
+    connectCallAudio(track);
+    return;
+  }
+  // Video: se muestra en el <video>, que arranca mudo -- el audio real sale
+  // por Web Audio (ver connectCallAudio), asi que el autoplay silenciado
+  // del navegador no tiene restricciones y no hace falta ningun reintento
+  // manual de play().
   callRemoteTracks.add(track);
-  // "muted" a nivel WebRTC (distinto de silenciar el microfono) significa
-  // "todavia no esta llegando informacion real de este track" -- arranca
-  // asi siempre hasta que llegue el primer paquete de verdad.
-  track.addEventListener("unmute", () => {
-    console.log(`[NEXUS-CALL] track ${track.kind} de ${peerId} ya trae datos reales (unmute)`);
-    if (track.kind === "video") els.callPanel.classList.add("has-remote-video");
-  });
-  track.addEventListener("mute", () => {
-    console.log(`[NEXUS-CALL] track ${track.kind} de ${peerId} dejo de traer datos (mute)`);
-    if (track.kind === "video") els.callPanel.classList.remove("has-remote-video");
-  });
-  scheduleCallRemoteStreamUpdate();
+  els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
+  track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
+  track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
 }
 
-// El audio y el video del otro lado llegan cada uno en su propio evento
-// "track" (normalmente audio y video casi juntos al conectar, y el video
-// puede llegar bastante despues si recien ahi prenden la camara). Antes se
-// reasignaba srcObject cada vez que llegaba un track: si llegaban dos
-// juntos, la segunda asignacion cancelaba el play() de la primera con un
-// AbortError, y a veces la llamada se quedaba sin sonar por eso. Ahora se
-// juntan todos los tracks que lleguen en el mismo instante (microtask) y
-// se reasigna/reproduce una sola vez con todos adentro.
-let callRemoteStreamUpdateScheduled = false;
-function scheduleCallRemoteStreamUpdate() {
-  if (callRemoteStreamUpdateScheduled) return;
-  callRemoteStreamUpdateScheduled = true;
-  queueMicrotask(() => {
-    callRemoteStreamUpdateScheduled = false;
-    if (callState !== "active") return;
-    els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
-    tryPlayCallRemoteMedia();
-  });
-}
-
-// Hay varios momentos que pueden avisar "probá reproducir ahora" (llego un
-// track, la conexion quedo conectada, el propio <video> avisa
-// loadedmetadata/canplay) y algunos pueden pisarse entre si si se disparan
-// casi juntos: pedirle play() al <video> mientras ya hay un play() anterior
-// sin resolver cancela ese anterior con un AbortError. callPlayInFlight
-// evita mandar un segundo pedido mientras el primero sigue en curso -- si
-// llega otro aviso mientras tanto, se guarda y se reintenta recien cuando
-// el actual termine (resuelva o falle), nunca en paralelo.
-let callPlayInFlight = false;
-let callPlayRetryNeeded = false;
-
-// Chrome/Edge/Safari bloquean reproducir audio con sonido "solo" (sin un
-// toque reciente del usuario): como el track de la llamada llega de forma
-// asincronica (despues de todo el intercambio de señales), puede que ya no
-// cuente como "reciente". Si el navegador lo bloquea de verdad, se
-// reintenta apenas haya cualquier otro toque en la pantalla.
-function tryPlayCallRemoteMedia() {
-  if (callState !== "active") return; // la llamada ya termino, no hay nada que reproducir
-  if (callPlayInFlight) {
-    callPlayRetryNeeded = true;
-    return;
-  }
-  callPlayInFlight = true;
-  let playResult;
-  try {
-    playResult = els.callRemoteVideo.play();
-  } catch (err) {
-    callPlayInFlight = false;
-    console.warn("[NEXUS-CALL] play() tiro un error de una:", err);
-    return;
-  }
-  if (!playResult?.catch) {
-    callPlayInFlight = false;
-    console.warn("[NEXUS-CALL] play() no devolvio una promesa (raro):", playResult);
-    return;
-  }
-  playResult
-    .then(() => console.log("[NEXUS-CALL] audio/video de la llamada reproduciendo"))
-    .catch((err) => {
-      if (err.name === "AbortError") {
-        // No es un bloqueo de verdad: se pidio reproducir de nuevo antes de
-        // que este pedido terminara. callPlayRetryNeeded ya va a disparar
-        // el reintento apenas se libere callPlayInFlight, aca abajo.
-        console.log("[NEXUS-CALL] play() interrumpido por otro pedido, se reintenta solo");
-        return;
-      }
-      console.warn("[NEXUS-CALL] reproduccion bloqueada por el navegador, se reintenta con el proximo toque:", err.name);
-      document.addEventListener("click", tryPlayCallRemoteMedia, { once: true });
-    })
-    .finally(() => {
-      callPlayInFlight = false;
-      if (callPlayRetryNeeded) {
-        callPlayRetryNeeded = false;
-        tryPlayCallRemoteMedia();
-      }
-    });
+// Mismo truco que ya usa el resto de la app para el audio de la sala (ver
+// _connectVolumeControl en createVideoTile): el audio real de la llamada
+// sale por Web Audio API, con el mismo AudioContext ya "desbloqueado" al
+// entrar a la sala (ver getSharedAudioContext), en vez de depender de que
+// el navegador deje reproducir audio con sonido en un <video> -- eso era
+// justo lo que fallaba de un lado si o si: los navegadores son mucho mas
+// estrictos bloqueando autoplay CON sonido que autoplay silenciado.
+let callGainNode = null;
+function connectCallAudio(track) {
+  if (callGainNode) return; // ya conectado
+  const ctx = getSharedAudioContext();
+  const source = ctx.createMediaStreamSource(new MediaStream([track]));
+  callGainNode = ctx.createGain();
+  callGainNode.gain.value = 1;
+  source.connect(callGainNode).connect(ctx.destination);
+  console.log("[NEXUS-CALL] audio de la llamada conectado por Web Audio");
 }
 
 function handleCallEnded(peerId) {
@@ -1360,14 +1291,6 @@ els.callCameraBtn.addEventListener("click", async () => {
 els.callFullscreenBtn.addEventListener("click", () => {
   enterFullscreen(els.callPanel, els.callRemoteVideo);
 });
-
-// En vez de adivinar en base a señales de WebRTC (llego un track, la
-// conexion esta "connected") cuando conviene reintentar play(), se usan
-// los propios eventos del <video> que avisan cuando el navegador considera
-// que ya tiene suficiente para reproducir de verdad. Mas confiable que
-// cualquier calculo manual de timing.
-els.callRemoteVideo.addEventListener("loadedmetadata", tryPlayCallRemoteMedia);
-els.callRemoteVideo.addEventListener("canplay", tryPlayCallRemoteMedia);
 
 // Tocar el recuadro chico (la propia camara, en la esquina) lo intercambia
 // con el grande: no se tocan las stream de cada <video>, solo se les da

@@ -27,7 +27,6 @@ export function createWebRTCManager({
   onRemoveStream,
   onModeratorExtraStream,
   onCallTrack,
-  onCallConnected,
   onCallEnded,
   isModeratorPeer = () => false,
 }) {
@@ -399,9 +398,7 @@ export function createWebRTCManager({
 
     pc.onconnectionstatechange = () => {
       console.log(`[NEXUS-CALL] conexion con ${peerId}: ${pc.connectionState}`);
-      if (pc.connectionState === "connected") {
-        onCallConnected?.(peerId);
-      } else if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
+      if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         endCall(peerId);
         onCallEnded?.(peerId);
       }
