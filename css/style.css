@@ -1115,24 +1115,6 @@ body {
   cursor: grabbing;
 }
 
-/* Boton para reproducir a mano si el autoplay (aunque silenciado) no
-   alcanzo en algunos navegadores viejos -- Safari en iPhones antiguos
-   sobre todo. */
-.call-play-overlay {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: var(--text-primary);
-  font-size: 1.3rem;
-  cursor: pointer;
-  z-index: 3;
-}
-
 /* "Agrandar" el panel de la llamada: no pide pantalla completa real al
    sistema operativo (ver isCallPanelMaximized en app.js), solo crece
    dentro de la misma pagina -- funciona igual en cualquier dispositivo,
@@ -1168,6 +1150,22 @@ body {
 .call-panel-status {
   color: var(--neon-cyan);
   font-size: 0.7rem;
+}
+
+/* Siempre visible (no solo cuando hay video): el volumen importa igual en
+   una llamada de solo audio. */
+.call-panel-volume-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 10px;
+  font-size: 0.9rem;
+}
+
+.call-panel-volume-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--neon-cyan);
+  cursor: pointer;
 }
 
 .call-panel-media {

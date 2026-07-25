@@ -56,7 +56,7 @@ const els = {
   callPanelMedia: document.getElementById("call-panel-media"),
   callRemoteVideo: document.getElementById("call-remote-video"),
   callLocalVideo: document.getElementById("call-local-video"),
-  callPlayOverlay: document.getElementById("call-play-overlay"),
+  callVolume: document.getElementById("call-volume"),
   callMuteBtn: document.getElementById("call-mute-btn"),
   callCameraBtn: document.getElementById("call-camera-btn"),
   callFullscreenBtn: document.getElementById("call-fullscreen-btn"),
@@ -1096,7 +1096,6 @@ function resetCallState() {
   els.callRemoteVideo.srcObject = null;
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
-  els.callPlayOverlay.classList.add("hidden");
   resetCallVideoRoles();
   resetCallPanelPosition();
 
@@ -1228,16 +1227,14 @@ function handleCallTrack(peerId, stream, track) {
   }
   // Video: se muestra en el <video>, que arranca mudo -- el audio real sale
   // por Web Audio (ver connectCallAudio), asi que el autoplay silenciado
-  // del navegador casi nunca esta restringido. "Casi": algunos Safari
-  // viejos (iPhone 7 entre ellos) igual a veces no lo arrancan solos, por
-  // eso el intento explicito de play() de abajo, con un boton a mano como
-  // ultimo recurso si ni asi arranca.
+  // del navegador no tiene restricciones. El intento explicito de play()
+  // es solo un empujon extra por si algun navegador no arranca solo con el
+  // atributo autoplay; se ignora en silencio si falla, sin mostrar nada
+  // (la renegociacion agregada en setCallVideoTrack ya evita que haga
+  // falta un boton manual).
   callRemoteTracks.add(track);
   els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
-  els.callRemoteVideo
-    .play()
-    .then(() => els.callPlayOverlay.classList.add("hidden"))
-    .catch(() => els.callPlayOverlay.classList.remove("hidden"));
+  els.callRemoteVideo.play().catch(() => {});
   track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
   track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
 }
@@ -1256,7 +1253,7 @@ function connectCallAudio(track) {
   console.log(`[NEXUS-CALL] AudioContext estado=${ctx.state}`);
   const source = ctx.createMediaStreamSource(new MediaStream([track]));
   callGainNode = ctx.createGain();
-  callGainNode.gain.value = 1;
+  callGainNode.gain.value = Number(els.callVolume.value);
   source.connect(callGainNode).connect(ctx.destination);
   console.log("[NEXUS-CALL] audio de la llamada conectado por Web Audio");
   track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
@@ -1313,6 +1310,14 @@ els.callMuteBtn.addEventListener("click", () => {
   els.callMuteBtn.textContent = track.enabled ? "🎤" : "🔇";
 });
 
+// Volumen de lo que se escucha de la llamada (no del propio microfono):
+// controla directo el GainNode de Web Audio (ver connectCallAudio). Si
+// todavia no hay audio conectado, el valor queda guardado en el propio
+// control y se aplica apenas se conecte.
+els.callVolume.addEventListener("input", () => {
+  if (callGainNode) callGainNode.gain.value = Number(els.callVolume.value);
+});
+
 els.callCameraBtn.addEventListener("click", async () => {
   if (callState !== "active") return;
   if (callVideoOn) {
@@ -1356,13 +1361,6 @@ function isCallPanelMaximized() {
 
 els.callFullscreenBtn.addEventListener("click", () => {
   els.callPanel.classList.toggle("call-panel-maximized");
-});
-
-els.callPlayOverlay.addEventListener("click", () => {
-  els.callRemoteVideo
-    .play()
-    .then(() => els.callPlayOverlay.classList.add("hidden"))
-    .catch(() => {});
 });
 
 // El panel se puede arrastrar agarrando el encabezado, para despejar
