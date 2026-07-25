@@ -1082,20 +1082,30 @@ body {
 }
 
 /* Panel de la llamada activa: chico y flotante mientras es solo audio (no
-   tapa el resto de la app), crece para mostrar video si alguno de los dos
-   prende la camara. */
+   tapa el resto de la app), crece a un tamaño fijo y comodo para mostrar
+   video si alguno de los dos prende la camara. Mismo ancho en cualquier
+   dispositivo (ver media query mas abajo para achicarlo en celular). */
 .call-panel {
   position: fixed;
   right: 18px;
   bottom: 18px;
   z-index: 55;
-  width: 220px;
+  width: 300px;
   border-radius: 14px;
   overflow: hidden;
   background: rgba(10, 9, 18, 0.92);
   border: 1px solid var(--border-glass);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+}
+
+.call-panel:fullscreen,
+.call-panel:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
 }
 
 .call-panel-header {
@@ -1123,23 +1133,45 @@ body {
   display: block;
 }
 
-#call-remote-video {
+.call-panel:fullscreen .call-panel-media,
+.call-panel:-webkit-full-screen .call-panel-media {
+  display: block;
+  flex: 1 1 auto;
+}
+
+/* Cual de los dos videos es "el grande" y cual "el chico" (recuadro en la
+   esquina) lo deciden estas dos clases, no de que elemento HTML se trate --
+   se pueden intercambiar tocando el recuadro chico (ver el click en
+   #call-panel-media dentro de app.js). */
+.call-video-main {
   width: 100%;
-  height: 160px;
+  height: 190px;
   object-fit: cover;
   display: block;
 }
 
-#call-local-video {
+.call-panel:fullscreen .call-video-main,
+.call-panel:-webkit-full-screen .call-video-main {
+  height: 100%;
+}
+
+.call-video-pip {
   position: absolute;
   right: 8px;
   bottom: 8px;
-  width: 64px;
-  height: 64px;
+  width: 76px;
+  height: 76px;
   border-radius: 8px;
   object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  transform: scaleX(-1); /* mismo efecto espejo que la propia vista previa de la sala */
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  z-index: 2;
+}
+
+/* El propio video (sea cual sea su rol en ese momento) siempre se ve
+   espejado, igual que la propia vista previa de la sala. */
+#call-local-video {
+  transform: scaleX(-1);
 }
 
 .call-panel-controls {
@@ -1198,5 +1230,12 @@ body {
     position: static;
     width: auto;
     max-height: 70vh;
+  }
+  /* Mismo ancho relativo en cualquier celular, en vez de un tamaño fijo en
+     px que en una pantalla chica se ve desproporcionado. */
+  .call-panel {
+    width: min(300px, calc(100vw - 24px));
+    right: 12px;
+    bottom: 12px;
   }
 }

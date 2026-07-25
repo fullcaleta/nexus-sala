@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=18" />
+  <link rel="stylesheet" href="css/style.css?v=19" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -140,17 +140,18 @@
       <span id="call-panel-name"></span>
       <span class="call-panel-status">En llamada</span>
     </div>
-    <div class="call-panel-media">
-      <video id="call-remote-video" autoplay playsinline></video>
-      <video id="call-local-video" autoplay playsinline muted class="hidden"></video>
+    <div id="call-panel-media" class="call-panel-media">
+      <video id="call-remote-video" class="call-video call-video-main" autoplay playsinline></video>
+      <video id="call-local-video" class="call-video call-video-pip hidden" autoplay playsinline muted></video>
     </div>
     <div class="call-panel-controls">
       <button type="button" id="call-mute-btn" class="btn btn-icon" title="Silenciar micrófono">🎤</button>
       <button type="button" id="call-camera-btn" class="btn btn-icon" title="Activar cámara">📷</button>
+      <button type="button" id="call-fullscreen-btn" class="btn btn-icon" title="Pantalla completa">⛶</button>
       <button type="button" id="call-hangup-btn" class="btn btn-danger" title="Colgar">📞</button>
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=33"></script>
+  <script type="module" src="js/app.js?v=34"></script>
 </body>
 </html>

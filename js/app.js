@@ -52,10 +52,12 @@ const els = {
   callAcceptBtn: document.getElementById("call-accept-btn"),
   callPanel: document.getElementById("call-panel"),
   callPanelName: document.getElementById("call-panel-name"),
+  callPanelMedia: document.getElementById("call-panel-media"),
   callRemoteVideo: document.getElementById("call-remote-video"),
   callLocalVideo: document.getElementById("call-local-video"),
   callMuteBtn: document.getElementById("call-mute-btn"),
   callCameraBtn: document.getElementById("call-camera-btn"),
+  callFullscreenBtn: document.getElementById("call-fullscreen-btn"),
   callHangupBtn: document.getElementById("call-hangup-btn"),
   leaveBtn: document.getElementById("leave-btn"),
   toggleMicBtn: document.getElementById("toggle-mic-btn"),
@@ -1100,12 +1102,23 @@ function resetCallState() {
   els.callRemoteVideo.srcObject = null;
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
+  resetCallVideoRoles();
+}
+
+// El video remoto arranca siempre como el grande y el propio como el chico
+// (recuadro), tal como al empezar cualquier llamada nueva.
+function resetCallVideoRoles() {
+  els.callRemoteVideo.classList.add("call-video-main");
+  els.callRemoteVideo.classList.remove("call-video-pip");
+  els.callLocalVideo.classList.add("call-video-pip");
+  els.callLocalVideo.classList.remove("call-video-main");
 }
 
 function showCallPanel() {
   els.callPanelName.textContent = callPeerName;
   els.callPanel.classList.remove("hidden");
   els.callPanel.classList.remove("has-remote-video");
+  resetCallVideoRoles();
   els.callMuteBtn.textContent = "🎤";
   els.callMuteBtn.classList.remove("muted");
   els.callCameraBtn.textContent = "📷";
@@ -1175,7 +1188,21 @@ function hangupActiveCall() {
 
 function handleCallTrack(peerId, stream, track) {
   if (peerId !== callPeerId || callState !== "active") return;
-  els.callRemoteVideo.srcObject = stream;
+  // El audio y el video del otro lado llegan cada uno en su propio evento
+  // "track" (el de audio se conecta al aceptar/llamar, el de video recien
+  // cuando el otro lado prende su camara) y no siempre agrupados en la
+  // misma stream. Asignar "stream" directo (event.streams[0]) cada vez
+  // pisaba lo que ya hubiera conectado antes -- por eso se escuchaba un
+  // lado si o si pero no el otro, y la camara del otro nunca se veia. Aca
+  // se arma una stream propia y fija, sumando cada track a medida que
+  // llega, sin pisar nada.
+  if (!els.callRemoteVideo.srcObject) {
+    els.callRemoteVideo.srcObject = new MediaStream();
+  }
+  const remoteStream = els.callRemoteVideo.srcObject;
+  if (!remoteStream.getTracks().includes(track)) {
+    remoteStream.addTrack(track);
+  }
   if (track.kind === "video") {
     // onmute/onunmute avisan cuando el video empieza/deja de traer cuadros
     // de verdad: el transceiver de video existe desde el arranque de la
@@ -1242,6 +1269,21 @@ els.callCameraBtn.addEventListener("click", async () => {
   }
 });
 
+els.callFullscreenBtn.addEventListener("click", () => {
+  enterFullscreen(els.callPanel, els.callRemoteVideo);
+});
+
+// Tocar el recuadro chico (la propia camara, en la esquina) lo intercambia
+// con el grande: no se tocan las stream de cada <video>, solo se les da
+// vuelta la clase que define cual es el principal y cual el recuadro chico.
+els.callPanelMedia.addEventListener("click", (e) => {
+  if (e.target.closest("#call-fullscreen-btn")) return;
+  if (!e.target.closest(".call-video-pip")) return;
+  for (const video of [els.callRemoteVideo, els.callLocalVideo]) {
+    video.classList.toggle("call-video-main");
+    video.classList.toggle("call-video-pip");
+  }
+});
 // La pestaña "General" ya existe en el HTML desde el arranque (las demas
 // se crean solas al abrir un privado, ver ensureDmTab/ensureModAllTab).
 els.chatTabs.querySelector('[data-thread="general"]').addEventListener("click", () => switchThread("general"));
