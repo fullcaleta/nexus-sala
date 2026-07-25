@@ -119,24 +119,30 @@ function getSharedAudioContext() {
   return sharedAudioContext;
 }
 
-// Desbloquea un <audio> con un play/pause silencioso dentro del propio
-// gesto del usuario (necesario en iOS/Safari, ver mas abajo). En
-// dispositivos lentos (iPhone 7 sobre todo) el play() a veces alcanza a
-// sonar una fraccion de segundo de verdad antes de que llegue el pause():
-// se baja el volumen a 0 Y se muta a la vez (por si alguno de los dos no
-// alcanza a aplicarse a tiempo), y se restauran los dos recien despues.
-function unlockAudioSilently(player, realVolume) {
-  player.volume = 0;
-  player.muted = true;
+// Un WAV de silencio total (8 muestras a cero), para "activar" el permiso
+// de audio en iOS dentro del gesto del usuario. Antes se lo intentaba con
+// el archivo real muteado/en volumen 0, pero en WebKit viejo (iPhone 7) esas
+// propiedades a veces no llegan a aplicarse antes de que arranque a sonar
+// de verdad. Reproduciendo esto en vez del archivo real, no hay nada que
+// se pueda llegar a escuchar aunque el timing falle: es silencio de
+// verdad, no un archivo con volumen bajado.
+const SILENT_AUDIO_SRC =
+  "data:audio/wav;base64,UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAgICAgICAgA==";
+
+// Desbloquea un <audio> dentro del propio gesto del usuario (necesario en
+// iOS/Safari): reproduce el silencio de arriba con ESTE MISMO elemento
+// (el desbloqueo queda asociado al elemento, no al archivo), y recien
+// despues le carga el archivo real que va a usar de ahi en mas.
+function unlockAudioSilently(player, realSrc, realVolume) {
+  player.volume = realVolume;
+  player.src = SILENT_AUDIO_SRC;
   player.play()
-    .then(() => {
-      player.pause();
-      player.currentTime = 0;
-    })
     .catch(() => {})
     .finally(() => {
-      player.muted = false;
-      player.volume = realVolume;
+      player.pause();
+      player.currentTime = 0;
+      player.src = realSrc;
+      player.load();
     });
 }
 
@@ -268,12 +274,11 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   label.className = "video-tile-label";
   label.textContent = isSelf ? `${name} (tú${isModerator ? " · invisible" : ""})` : name;
 
-  const fullscreenBtn = document.createElement("button");
-  fullscreenBtn.className = "video-tile-fullscreen-btn";
-  fullscreenBtn.type = "button";
-  fullscreenBtn.title = "Ver en pantalla completa";
-  fullscreenBtn.textContent = "⛶";
-  fullscreenBtn.addEventListener("click", () => {
+  // "let", no "const": en iOS a veces hace falta reemplazar este boton por
+  // un nodo nuevo (ver webkitendfullscreen mas abajo), asi que la variable
+  // tiene que poder apuntar a ese reemplazo despues.
+  let fullscreenBtn = document.createElement("button");
+  function handleFullscreenBtnClick() {
     const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
     if (fsEl === tile || fsEl === video) {
       if (document.exitFullscreen) document.exitFullscreen();
@@ -293,7 +298,12 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // desmutear por codigo solo funciona bien dentro del toque directo.
     video._handoffToNativeFullscreenAudio?.();
     enterFullscreen(tile, video);
-  });
+  }
+  fullscreenBtn.className = "video-tile-fullscreen-btn";
+  fullscreenBtn.type = "button";
+  fullscreenBtn.title = "Ver en pantalla completa";
+  fullscreenBtn.textContent = "⛶";
+  fullscreenBtn.addEventListener("click", handleFullscreenBtnClick);
 
   tile.appendChild(video);
   tile.appendChild(label);
@@ -354,16 +364,15 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       // Bug conocido de WebKit/iOS: al salir de su pantalla completa
       // nativa, a veces deja de "pintar" los botones que quedaban encima
       // del video (siguen ahi y funcionan -- responden al toque -- pero no
-      // se ven). Como responde al toque, no es un problema de layout (por
-      // eso alternar display no alcanzaba): es la capa de composicion de
-      // WebKit que queda vieja. Forzar un cambio de opacity es lo que
-      // saca a esa capa de su estado stale de forma confiable.
-      requestAnimationFrame(() => {
-        tile.style.opacity = "0.999";
-        requestAnimationFrame(() => {
-          tile.style.opacity = "";
-        });
-      });
+      // se ven). Ya se probo forzar un reflow y un cambio de opacity, sin
+      // resultado: la unica forma realmente confiable de sacarlo de ese
+      // estado "pintado viejo" es reemplazarlo por un nodo nuevo (un
+      // elemento recien creado no puede tener una capa de composicion
+      // vieja).
+      const freshBtn = fullscreenBtn.cloneNode(true);
+      freshBtn.addEventListener("click", handleFullscreenBtnClick);
+      fullscreenBtn.replaceWith(freshBtn);
+      fullscreenBtn = freshBtn;
     });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
@@ -1047,14 +1056,14 @@ els.joinForm.addEventListener("submit", async (e) => {
     // Mismo motivo: se "activan" los reproductores del sonido de mensaje
     // privado con un play/pause silencioso dentro de este mismo clic.
     dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
-      const player = new Audio("sounds/mp.mp3");
-      unlockAudioSilently(player, 0.6);
+      const player = new Audio();
+      unlockAudioSilently(player, "sounds/mp.mp3", 0.6);
       return player;
     });
     // Mismo desbloqueo silencioso para el tono de llamada entrante.
-    callRingtonePlayer = new Audio("sounds/llamada.mp3");
+    callRingtonePlayer = new Audio();
     callRingtonePlayer.loop = true;
-    unlockAudioSilently(callRingtonePlayer, 0.7);
+    unlockAudioSilently(callRingtonePlayer, "sounds/llamada.mp3", 0.7);
   } catch (err) {
     console.warn("No se pudo preparar el audio de avisos:", err);
   }
