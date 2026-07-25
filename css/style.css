@@ -1083,12 +1083,16 @@ body {
 
 /* Panel de la llamada activa: chico y flotante mientras es solo audio (no
    tapa el resto de la app), crece a un tamaño fijo y comodo para mostrar
-   video si alguno de los dos prende la camara. Mismo ancho en cualquier
-   dispositivo (ver media query mas abajo para achicarlo en celular). */
+   video si alguno de los dos prende la camara. Arranca arriba a la derecha
+   (no abajo) para no tapar el cuadro de escribir del chat, y se puede
+   arrastrar agarrando el encabezado (ver drag en app.js) para despejar
+   cualquier parte de la pantalla que haga falta ver. Mismo ancho en
+   cualquier dispositivo (ver media query mas abajo para achicarlo en
+   celular). */
 .call-panel {
   position: fixed;
+  top: 18px;
   right: 18px;
-  bottom: 18px;
   z-index: 55;
   width: 300px;
   border-radius: 14px;
@@ -1099,6 +1103,34 @@ body {
   backdrop-filter: blur(6px);
   display: flex;
   flex-direction: column;
+}
+
+.call-panel-header {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.call-panel-header:active {
+  cursor: grabbing;
+}
+
+/* Boton para reproducir a mano si el autoplay (aunque silenciado) no
+   alcanzo en algunos navegadores viejos -- Safari en iPhones antiguos
+   sobre todo. */
+.call-play-overlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--text-primary);
+  font-size: 1.3rem;
+  cursor: pointer;
+  z-index: 3;
 }
 
 .call-panel:fullscreen,
@@ -1239,7 +1271,7 @@ body {
      px que en una pantalla chica se ve desproporcionado. */
   .call-panel {
     width: min(300px, calc(100vw - 24px));
+    top: 12px;
     right: 12px;
-    bottom: 12px;
   }
 }

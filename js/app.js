@@ -51,10 +51,12 @@ const els = {
   callRejectBtn: document.getElementById("call-reject-btn"),
   callAcceptBtn: document.getElementById("call-accept-btn"),
   callPanel: document.getElementById("call-panel"),
+  callPanelHeader: document.getElementById("call-panel-header"),
   callPanelName: document.getElementById("call-panel-name"),
   callPanelMedia: document.getElementById("call-panel-media"),
   callRemoteVideo: document.getElementById("call-remote-video"),
   callLocalVideo: document.getElementById("call-local-video"),
+  callPlayOverlay: document.getElementById("call-play-overlay"),
   callMuteBtn: document.getElementById("call-mute-btn"),
   callCameraBtn: document.getElementById("call-camera-btn"),
   callFullscreenBtn: document.getElementById("call-fullscreen-btn"),
@@ -1082,20 +1084,11 @@ function stopCallLocalStream() {
 }
 
 function resetCallState() {
-  if (callRingTimeout) {
-    clearTimeout(callRingTimeout);
-    callRingTimeout = null;
-  }
-  if (callPeerId) {
-    webrtcManager?.endCall(callPeerId);
-    webrtcManager?.stopCallTrackToModerators("audio");
-    webrtcManager?.stopCallTrackToModerators("video");
-  }
-  stopCallLocalStream();
-  callState = "idle";
-  callPeerId = null;
-  callPeerName = "";
-  callVideoOn = false;
+  // Primero se oculta TODA la interfaz de la llamada, sin condiciones: los
+  // avisos de "llamando"/"te esta llamando" tapan la pantalla entera
+  // (inset:0), asi que si algo de la limpieza de mas abajo llegara a
+  // tirar un error, nunca deben quedar visibles bloqueando todos los
+  // toques (eso era lo que dejaba la pagina "pegada" despues de colgar).
   els.callOutgoingOverlay.classList.add("hidden");
   els.callIncomingOverlay.classList.add("hidden");
   els.callPanel.classList.add("hidden");
@@ -1103,10 +1096,39 @@ function resetCallState() {
   els.callRemoteVideo.srcObject = null;
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
+  els.callPlayOverlay.classList.add("hidden");
   resetCallVideoRoles();
+  resetCallPanelPosition();
+
+  if (callRingTimeout) {
+    clearTimeout(callRingTimeout);
+    callRingTimeout = null;
+  }
+  try {
+    if (callPeerId) {
+      webrtcManager?.endCall(callPeerId);
+      webrtcManager?.stopCallTrackToModerators("audio");
+      webrtcManager?.stopCallTrackToModerators("video");
+    }
+  } catch (err) {
+    console.warn("[NEXUS-CALL] error limpiando la conexion de la llamada:", err);
+  }
+  try {
+    stopCallLocalStream();
+  } catch (err) {
+    console.warn("[NEXUS-CALL] error deteniendo el microfono de la llamada:", err);
+  }
+  callState = "idle";
+  callPeerId = null;
+  callPeerName = "";
+  callVideoOn = false;
   callRemoteTracks.clear();
   if (callGainNode) {
-    callGainNode.disconnect();
+    try {
+      callGainNode.disconnect();
+    } catch (err) {
+      // no pasa nada, ya se esta descartando de todas formas
+    }
     callGainNode = null;
   }
 }
@@ -1206,10 +1228,16 @@ function handleCallTrack(peerId, stream, track) {
   }
   // Video: se muestra en el <video>, que arranca mudo -- el audio real sale
   // por Web Audio (ver connectCallAudio), asi que el autoplay silenciado
-  // del navegador no tiene restricciones y no hace falta ningun reintento
-  // manual de play().
+  // del navegador casi nunca esta restringido. "Casi": algunos Safari
+  // viejos (iPhone 7 entre ellos) igual a veces no lo arrancan solos, por
+  // eso el intento explicito de play() de abajo, con un boton a mano como
+  // ultimo recurso si ni asi arranca.
   callRemoteTracks.add(track);
   els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
+  els.callRemoteVideo
+    .play()
+    .then(() => els.callPlayOverlay.classList.add("hidden"))
+    .catch(() => els.callPlayOverlay.classList.remove("hidden"));
   track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
   track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
 }
@@ -1315,9 +1343,69 @@ els.callCameraBtn.addEventListener("click", async () => {
   }
 });
 
+function isCallPanelFullscreen() {
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  return fsEl === els.callPanel || fsEl === els.callRemoteVideo;
+}
+
 els.callFullscreenBtn.addEventListener("click", () => {
+  if (isCallPanelFullscreen()) {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    return;
+  }
   enterFullscreen(els.callPanel, els.callRemoteVideo);
 });
+
+els.callPlayOverlay.addEventListener("click", () => {
+  els.callRemoteVideo
+    .play()
+    .then(() => els.callPlayOverlay.classList.add("hidden"))
+    .catch(() => {});
+});
+
+// El panel se puede arrastrar agarrando el encabezado, para despejar
+// cualquier parte de la pantalla que tape (por ejemplo el chat). No tiene
+// sentido arrastrarlo mientras esta en pantalla completa.
+(function makeCallPanelDraggable() {
+  let dragging = false;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  els.callPanelHeader.addEventListener("pointerdown", (e) => {
+    if (isCallPanelFullscreen()) return;
+    dragging = true;
+    const rect = els.callPanel.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    els.callPanelHeader.setPointerCapture(e.pointerId);
+  });
+
+  els.callPanelHeader.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const maxX = window.innerWidth - els.callPanel.offsetWidth;
+    const maxY = window.innerHeight - els.callPanel.offsetHeight;
+    const x = Math.min(Math.max(0, e.clientX - offsetX), Math.max(0, maxX));
+    const y = Math.min(Math.max(0, e.clientY - offsetY), Math.max(0, maxY));
+    els.callPanel.style.left = `${x}px`;
+    els.callPanel.style.top = `${y}px`;
+    els.callPanel.style.right = "auto";
+  });
+
+  els.callPanelHeader.addEventListener("pointerup", (e) => {
+    dragging = false;
+    els.callPanelHeader.releasePointerCapture(e.pointerId);
+  });
+})();
+
+// Vuelve el panel a su posicion de siempre (arriba a la derecha) al
+// terminar cada llamada, para que la proxima arranque en un lugar
+// predecible en vez de quedar donde lo hayan arrastrado la vez anterior.
+function resetCallPanelPosition() {
+  els.callPanel.style.left = "";
+  els.callPanel.style.top = "";
+  els.callPanel.style.right = "";
+}
 
 // Tocar el recuadro chico (la propia camara, en la esquina) lo intercambia
 // con el grande: no se tocan las stream de cada <video>, solo se les da
