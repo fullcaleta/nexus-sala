@@ -370,12 +370,9 @@ body {
   object-fit: contain;
 }
 
-/* El propio boton de pantalla completa no tiene sentido mientras ya se esta
-   viendo en pantalla completa (no hay forma de "re-entrar"). */
-.video-tile:fullscreen .video-tile-fullscreen-btn,
-.video-tile:-webkit-full-screen .video-tile-fullscreen-btn {
-  display: none;
-}
+/* Se deja visible tambien en pantalla completa (antes se ocultaba, dando a
+   entender que no se podia volver a achicar la ventana): el mismo boton
+   ahora sirve para salir tambien (ver el click en app.js). */
 
 /* Efecto espejo solo para tu propia vista previa (como te ves al mirarte a
    un espejo, con cualquiera de las dos camaras). Los demas participantes

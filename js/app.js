@@ -237,6 +237,21 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
   fullscreenBtn.title = "Ver en pantalla completa";
   fullscreenBtn.textContent = "⛶";
   fullscreenBtn.addEventListener("click", () => {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl === tile || fsEl === video) {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      return;
+    }
+    // iOS/Safari viejo con webkitEnterFullscreen (ver enterFullscreen mas
+    // abajo) no pasa por document.fullscreenElement: esta propiedad aparte
+    // (webkitDisplayingFullscreen) es la que avisa si ESE video puntual
+    // esta en su pantalla completa nativa, y su salida es un metodo propio
+    // del <video>, no de document.
+    if (video.webkitDisplayingFullscreen) {
+      video.webkitExitFullscreen?.();
+      return;
+    }
     // Adelantado al propio clic (ver donde se define mas abajo): en iOS,
     // desmutear por codigo solo funciona bien dentro del toque directo.
     video._handoffToNativeFullscreenAudio?.();
