@@ -1233,6 +1233,30 @@ function connectCallAudio(track) {
   console.log("[NEXUS-CALL] audio de la llamada conectado por Web Audio");
   track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
   track.addEventListener("mute", () => console.log("[NEXUS-CALL] track de audio de la llamada DEJO de traer datos (mute)"));
+  monitorCallAudioLevel(ctx, source);
+}
+
+// Mide el volumen real del audio recibido (no solo si llegan paquetes: si
+// esos paquetes tienen sonido de verdad o son silencio). Se loguea cada
+// segundo durante 10 segundos y se corta sola.
+function monitorCallAudioLevel(ctx, source) {
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  let ticks = 0;
+  const interval = setInterval(() => {
+    if (callState !== "active") {
+      clearInterval(interval);
+      return;
+    }
+    analyser.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    const max = Math.max(...data);
+    console.log(`[NEXUS-CALL-NIVEL] volumen recibido: promedio=${avg.toFixed(1)} pico=${max}`);
+    ticks++;
+    if (ticks >= 10) clearInterval(interval);
+  }, 1000);
 }
 
 function handleCallEnded(peerId) {
