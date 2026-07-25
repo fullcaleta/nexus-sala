@@ -168,6 +168,7 @@ let callPeerName = "";
 let callLocalStream = null; // microfono (+ camara si se prende) de la llamada activa
 let callVideoOn = false;
 let callRingTimeout = null;
+const callRemoteTracks = new Set(); // ver handleCallTrack: se reconstruye la stream entera cada vez
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -1104,6 +1105,7 @@ function resetCallState() {
   els.callLocalVideo.classList.add("hidden");
   resetCallVideoRoles();
   document.removeEventListener("click", tryPlayCallRemoteMedia);
+  callRemoteTracks.clear();
 }
 
 // El video remoto arranca siempre como el grande y el propio como el chico
@@ -1198,18 +1200,14 @@ function handleCallTrack(peerId, stream, track) {
   // El audio y el video del otro lado llegan cada uno en su propio evento
   // "track" (el de audio se conecta al aceptar/llamar, el de video recien
   // cuando el otro lado prende su camara) y no siempre agrupados en la
-  // misma stream. Asignar "stream" directo (event.streams[0]) cada vez
-  // pisaba lo que ya hubiera conectado antes -- por eso se escuchaba un
-  // lado si o si pero no el otro, y la camara del otro nunca se veia. Aca
-  // se arma una stream propia y fija, sumando cada track a medida que
-  // llega, sin pisar nada.
-  if (!els.callRemoteVideo.srcObject) {
-    els.callRemoteVideo.srcObject = new MediaStream();
-  }
-  const remoteStream = els.callRemoteVideo.srcObject;
-  if (!remoteStream.getTracks().includes(track)) {
-    remoteStream.addTrack(track);
-  }
+  // misma stream. Antes se armaba una stream vacia y se le iba haciendo
+  // addTrack despues -- algunos navegadores no reaccionan bien a eso (el
+  // <video> se queda "pausado" sin sonar ni fallar, ni bloqueado ni
+  // reproduciendo). Ahora se arma una stream NUEVA con todos los tracks
+  // conocidos hasta el momento cada vez que llega uno, y se reasigna
+  // entera: mas pesado pero mucho mas confiable.
+  callRemoteTracks.add(track);
+  els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
   // "muted" a nivel WebRTC (distinto de silenciar el microfono) significa
   // "todavia no esta llegando informacion real de este track" -- arranca
   // asi siempre hasta que llegue el primer paquete de verdad.
@@ -1232,8 +1230,17 @@ function handleCallTrack(peerId, stream, track) {
 // hace falta avisarle nada mientras funcione).
 function tryPlayCallRemoteMedia() {
   if (callState !== "active") return; // la llamada ya termino, no hay nada que reproducir
-  const playResult = els.callRemoteVideo.play();
-  if (!playResult?.catch) return;
+  let playResult;
+  try {
+    playResult = els.callRemoteVideo.play();
+  } catch (err) {
+    console.warn("[NEXUS-CALL] play() tiro un error de una:", err);
+    return;
+  }
+  if (!playResult?.catch) {
+    console.warn("[NEXUS-CALL] play() no devolvio una promesa (raro):", playResult);
+    return;
+  }
   playResult
     .then(() => console.log("[NEXUS-CALL] audio/video de la llamada reproduciendo"))
     .catch((err) => {
