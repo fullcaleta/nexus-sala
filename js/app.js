@@ -119,6 +119,27 @@ function getSharedAudioContext() {
   return sharedAudioContext;
 }
 
+// Desbloquea un <audio> con un play/pause silencioso dentro del propio
+// gesto del usuario (necesario en iOS/Safari, ver mas abajo). En
+// dispositivos lentos (iPhone 7 sobre todo) el play() a veces alcanza a
+// sonar una fraccion de segundo de verdad antes de que llegue el pause():
+// se baja el volumen a 0 Y se muta a la vez (por si alguno de los dos no
+// alcanza a aplicarse a tiempo), y se restauran los dos recien despues.
+function unlockAudioSilently(player, realVolume) {
+  player.volume = 0;
+  player.muted = true;
+  player.play()
+    .then(() => {
+      player.pause();
+      player.currentTime = 0;
+    })
+    .catch(() => {})
+    .finally(() => {
+      player.muted = false;
+      player.volume = realVolume;
+    });
+}
+
 // Sonido de aviso al recibir un mensaje privado. Se usan varios reproductores
 // en vez de uno solo: en iOS, reiniciar (currentTime = 0) el mismo <audio>
 // mientras todavia esta sonando puede hacer que la reproduccion se pise y no
@@ -331,15 +352,18 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       video.muted = true;
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
       // Bug conocido de WebKit/iOS: al salir de su pantalla completa
-      // nativa, a veces no vuelve a "pintar" los botones que quedaban
-      // encima del video (siguen ahi y funcionan -- responden al toque --
-      // pero quedan invisibles). Alternar display en el boton solo no
-      // alcanzo; se fuerza un repintado mas agresivo de TODO el recuadro
-      // (display:none del tile entero, reflow, display normal), que es lo
-      // que suele hacer falta para esta clase de bug de WebKit.
-      tile.style.display = "none";
-      void tile.offsetHeight; // fuerza el reflow
-      tile.style.display = "";
+      // nativa, a veces deja de "pintar" los botones que quedaban encima
+      // del video (siguen ahi y funcionan -- responden al toque -- pero no
+      // se ven). Como responde al toque, no es un problema de layout (por
+      // eso alternar display no alcanzaba): es la capa de composicion de
+      // WebKit que queda vieja. Forzar un cambio de opacity es lo que
+      // saca a esa capa de su estado stale de forma confiable.
+      requestAnimationFrame(() => {
+        tile.style.opacity = "0.999";
+        requestAnimationFrame(() => {
+          tile.style.opacity = "";
+        });
+      });
     });
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
@@ -1024,38 +1048,13 @@ els.joinForm.addEventListener("submit", async (e) => {
     // privado con un play/pause silencioso dentro de este mismo clic.
     dmSoundPool = Array.from({ length: DM_SOUND_POOL_SIZE }, () => {
       const player = new Audio("sounds/mp.mp3");
-      player.volume = 0.6;
-      // En dispositivos lentos (iPhone 7 sobre todo), el play() de este
-      // desbloqueo silencioso a veces alcanza a sonar una fraccion de
-      // segundo de verdad antes de que llegue el pause() -- se lo muta
-      // mientras dura el truco, y se lo destapa recien despues, para que
-      // eso nunca se escuche.
-      player.muted = true;
-      player.play()
-        .then(() => {
-          player.pause();
-          player.currentTime = 0;
-          player.muted = false;
-        })
-        .catch(() => {
-          player.muted = false;
-        });
+      unlockAudioSilently(player, 0.6);
       return player;
     });
     // Mismo desbloqueo silencioso para el tono de llamada entrante.
     callRingtonePlayer = new Audio("sounds/llamada.mp3");
     callRingtonePlayer.loop = true;
-    callRingtonePlayer.volume = 0.7;
-    callRingtonePlayer.muted = true;
-    callRingtonePlayer.play()
-      .then(() => {
-        callRingtonePlayer.pause();
-        callRingtonePlayer.currentTime = 0;
-        callRingtonePlayer.muted = false;
-      })
-      .catch(() => {
-        callRingtonePlayer.muted = false;
-      });
+    unlockAudioSilently(callRingtonePlayer, 0.7);
   } catch (err) {
     console.warn("No se pudo preparar el audio de avisos:", err);
   }
