@@ -201,8 +201,8 @@ export function sendCallAccept(to) {
   sendMessage({ type: "call-accept", to });
 }
 
-export function sendCallReject(to) {
-  sendMessage({ type: "call-reject", to });
+export function sendCallReject(to, reason) {
+  sendMessage({ type: "call-reject", to, reason });
 }
 
 export function sendCallCancel(to) {

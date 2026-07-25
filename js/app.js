@@ -15,7 +15,7 @@ import {
   sendCallHangup,
   kickUser,
   disconnect,
-} from "./realtime.js?v=4";
+} from "./realtime.js?v=5";
 import { createWebRTCManager } from "./webrtc.js?v=9";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -850,8 +850,9 @@ async function joinRoom() {
   addRoomListener("call-invite", (msg) => {
     if (callState !== "idle") {
       // ya ocupado (llamando, sonando o en otra llamada): se rechaza sola,
-      // sin interrumpir con un cartel.
-      sendCallReject(msg.from);
+      // sin interrumpir con un cartel, pero avisandole a quien llama por
+      // que (ver "busy" en el listener de call-reject).
+      sendCallReject(msg.from, "busy");
       return;
     }
     callPeerId = msg.from;
@@ -867,7 +868,11 @@ async function joinRoom() {
   });
 
   addRoomListener("call-reject", (msg) => {
-    if (callState === "calling" && msg.from === callPeerId) resetCallState();
+    if (callState !== "calling" || msg.from !== callPeerId) return;
+    const busy = msg.reason === "busy";
+    const peerName = callPeerName;
+    resetCallState();
+    if (busy) alert(`${peerName} está en otra llamada ahora mismo.`);
   });
 
   addRoomListener("call-accept", async (msg) => {
