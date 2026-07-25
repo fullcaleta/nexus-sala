@@ -1336,6 +1336,14 @@ els.callFullscreenBtn.addEventListener("click", () => {
   enterFullscreen(els.callPanel, els.callRemoteVideo);
 });
 
+// En vez de adivinar en base a señales de WebRTC (llego un track, la
+// conexion esta "connected") cuando conviene reintentar play(), se usan
+// los propios eventos del <video> que avisan cuando el navegador considera
+// que ya tiene suficiente para reproducir de verdad. Mas confiable que
+// cualquier calculo manual de timing.
+els.callRemoteVideo.addEventListener("loadedmetadata", tryPlayCallRemoteMedia);
+els.callRemoteVideo.addEventListener("canplay", tryPlayCallRemoteMedia);
+
 // Tocar el recuadro chico (la propia camara, en la esquina) lo intercambia
 // con el grande: no se tocan las stream de cada <video>, solo se les da
 // vuelta la clase que define cual es el principal y cual el recuadro chico.
