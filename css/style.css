@@ -1265,9 +1265,12 @@ body {
   z-index: 2;
 }
 
-/* El propio video (sea cual sea su rol en ese momento) siempre se ve
-   espejado, igual que la propia vista previa de la sala. */
-#call-local-video {
+/* Igual que en la vista previa de la sala (.local-tile.mirrored): el
+   espejo solo tiene sentido con la camara frontal. Con la trasera (por
+   ejemplo apuntando a un texto) espejar deja todo al reves para quien la
+   esta usando. La clase "mirrored" se agrega/quita en JS segun la camara
+   activa (ver toggleCallCamera/switchCallCamera en app.js). */
+#call-local-video.mirrored {
   transform: scaleX(-1);
 }
 

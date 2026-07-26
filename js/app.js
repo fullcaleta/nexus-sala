@@ -1369,13 +1369,14 @@ els.callCameraBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
     const camTrack = camStream.getVideoTracks()[0];
     callLocalStream.addTrack(camTrack);
     webrtcManager.setCallVideoTrack(callPeerId, camTrack);
     webrtcManager.sendCallTrackToModerators("video", camTrack);
     els.callLocalVideo.srcObject = new MediaStream([camTrack]);
     els.callLocalVideo.classList.remove("hidden");
+    els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
     callVideoOn = true;
     els.callCameraBtn.classList.add("active");
     els.callSwitchCamBtn.classList.remove("hidden");
@@ -1394,6 +1395,7 @@ async function switchCallCamera() {
   if (callState !== "active" || !callVideoOn || !callLocalStream) return;
   const oldTrack = callLocalStream.getVideoTracks()[0];
   if (!oldTrack) return;
+  const newFacing = oldTrack.getSettings().facingMode === "user" ? "environment" : "user";
   let newStream;
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -1408,7 +1410,6 @@ async function switchCallCamera() {
   }
   if (!newStream) {
     try {
-      const newFacing = oldTrack.getSettings().facingMode === "user" ? "environment" : "user";
       newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: newFacing } } });
     } catch (err2) {
       alert("No se pudo cambiar de cámara en este dispositivo.");
@@ -1423,6 +1424,11 @@ async function switchCallCamera() {
   webrtcManager.stopCallTrackToModerators("video");
   webrtcManager.sendCallTrackToModerators("video", newTrack);
   els.callLocalVideo.srcObject = new MediaStream([newTrack]);
+  // Al pedir "por dispositivo" (deviceId), el track resultante no siempre
+  // informa su facingMode real -- por eso el fallback a newFacing (lo que
+  // se pidio) si el navegador no lo reporta, igual que en applyNewVideoTrack.
+  const reportedFacing = newTrack.getSettings().facingMode;
+  els.callLocalVideo.classList.toggle("mirrored", (reportedFacing || newFacing) === "user");
 }
 
 els.callSwitchCamBtn.addEventListener("click", switchCallCamera);
