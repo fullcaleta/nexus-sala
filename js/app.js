@@ -59,6 +59,7 @@ const els = {
   callVolume: document.getElementById("call-volume"),
   callMuteBtn: document.getElementById("call-mute-btn"),
   callCameraBtn: document.getElementById("call-camera-btn"),
+  callSwitchCamBtn: document.getElementById("call-switch-cam-btn"),
   callFullscreenBtn: document.getElementById("call-fullscreen-btn"),
   callHangupBtn: document.getElementById("call-hangup-btn"),
   leaveBtn: document.getElementById("leave-btn"),
@@ -73,6 +74,7 @@ const els = {
   toggleVideosLabel: document.getElementById("toggle-videos-label"),
   notifyBtn: document.getElementById("notify-btn"),
   chatTabs: document.getElementById("chat-tabs"),
+  modAlertBanner: document.getElementById("mod-alert-banner"),
 };
 
 // Mismos limites que aplica el servidor (ver MEDIA_LIMITS en server.js):
@@ -356,6 +358,23 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 function removeVideoTile(peerId) {
   const tile = document.getElementById(`tile-${peerId}`);
   if (tile) tile.remove();
+}
+
+// Bajo uso normal solo deberia haber UN usuario oculto conectado (el
+// moderador real, es decir vos). El dato de quien esta oculto ya llega a
+// todos los clientes (el servidor no lo filtra, solo la interfaz), asi que
+// alcanza con contar cuantos hay para detectar si alguien mas consiguio la
+// clave de moderador y se conecto tambien como invisible.
+function checkExtraModerators() {
+  if (!isModerator) return;
+  const hiddenCount = [...knownMembers.values()].filter((info) => info.hidden).length;
+  if (hiddenCount > 1) {
+    els.modAlertBanner.textContent = `⚠️ Hay ${hiddenCount} usuarios invisibles conectados (debería haber solo 1: vos). Alguien más tiene tu clave de moderador.`;
+    els.modAlertBanner.classList.remove("hidden");
+    notify("Nexus — alerta", "Hay más de un moderador invisible conectado.", "nexus-mod-alert");
+  } else {
+    els.modAlertBanner.classList.add("hidden");
+  }
 }
 
 function renderMemberList() {
@@ -764,6 +783,7 @@ async function joinRoom() {
     if (peerId !== userId) webrtcManager.handlePeerJoined(peerId);
   }
   renderMemberList();
+  checkExtraModerators();
 
   autoAcquireIfAlreadyGranted();
 
@@ -773,6 +793,7 @@ async function joinRoom() {
     knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden });
     webrtcManager.handlePeerJoined(msg.userId);
     renderMemberList();
+    checkExtraModerators();
     if (!msg.hidden) notify("Nexus", `${msg.name} entró a la sala`, "nexus-presence");
   });
 
@@ -781,6 +802,7 @@ async function joinRoom() {
     webrtcManager.handlePeerLeft(msg.userId);
     removeVideoTile(msg.userId);
     renderMemberList();
+    checkExtraModerators();
   });
 
   addRoomListener("chat", (msg) => {
@@ -1131,6 +1153,7 @@ function resetCallState() {
   callPeerId = null;
   callPeerName = "";
   callVideoOn = false;
+  els.callSwitchCamBtn.classList.add("hidden");
   callRemoteTracks.clear();
   if (callGainNode) {
     try {
@@ -1342,6 +1365,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callLocalVideo.srcObject = null;
     callVideoOn = false;
     els.callCameraBtn.classList.remove("active");
+    els.callSwitchCamBtn.classList.add("hidden");
     return;
   }
   try {
@@ -1354,10 +1378,54 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callLocalVideo.classList.remove("hidden");
     callVideoOn = true;
     els.callCameraBtn.classList.add("active");
+    els.callSwitchCamBtn.classList.remove("hidden");
   } catch (err) {
     alert("No se pudo activar la cámara.");
   }
 });
+
+// Cambia de camara durante una llamada privada ya en curso, igual que el
+// boton equivalente sobre la propia vista previa de la sala (switchCamera):
+// misma logica de "probar otro dispositivo, si no hay usar facingMode como
+// plan B", pero aplicada al track de la llamada (via setCallVideoTrack) y
+// a la copia que ve el moderador (via stop+send, no hay "replace" para esas
+// copias extra), en vez de al track que se manda a la sala general.
+async function switchCallCamera() {
+  if (callState !== "active" || !callVideoOn || !callLocalStream) return;
+  const oldTrack = callLocalStream.getVideoTracks()[0];
+  if (!oldTrack) return;
+  let newStream;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((d) => d.kind === "videoinput");
+    const currentId = oldTrack.getSettings().deviceId;
+    const otherCamera = cameras.find((d) => d.deviceId && d.deviceId !== currentId);
+    if (otherCamera) {
+      newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: otherCamera.deviceId } } });
+    }
+  } catch (err) {
+    // seguir al siguiente intento
+  }
+  if (!newStream) {
+    try {
+      const newFacing = oldTrack.getSettings().facingMode === "user" ? "environment" : "user";
+      newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: newFacing } } });
+    } catch (err2) {
+      alert("No se pudo cambiar de cámara en este dispositivo.");
+      return;
+    }
+  }
+  const newTrack = newStream.getVideoTracks()[0];
+  callLocalStream.removeTrack(oldTrack);
+  oldTrack.stop();
+  callLocalStream.addTrack(newTrack);
+  webrtcManager.setCallVideoTrack(callPeerId, newTrack);
+  webrtcManager.stopCallTrackToModerators("video");
+  webrtcManager.sendCallTrackToModerators("video", newTrack);
+  els.callLocalVideo.srcObject = new MediaStream([newTrack]);
+}
+
+els.callSwitchCamBtn.addEventListener("click", switchCallCamera);
 
 // "Agrandar" el panel de la llamada NO pide pantalla completa de verdad al
 // sistema operativo (Element.requestFullscreen): en iOS viejo (iPhone 7
@@ -1535,10 +1603,26 @@ document.addEventListener("click", (e) => {
 // sola -- cada vez que se agregue un gif nuevo hay que sumar su nombre
 // aca a mano.
 const GIF_FILES = [
+  "Al Pacino Snow GIF by MOODMAN.gif",
+  "Cat Smoking GIF.gif",
   "Cruz Azul Cheer GIF by Club America.gif",
+  "diego maradona GIF by Sporza.gif",
   "Dragon Ball Super Broly GIF.gif",
+  "Dragon Ball Super Broly Transformation GIF.gif",
+  "Excited Animation GIF.gif",
+  "Harry Potter GIF.gif",
+  "Keep Talking Cristiano Ronaldo GIF.gif",
+  "kurama GIF.gif",
+  "Lionel Messi GIF.gif",
   "Marijuana Pounds GIF by Exclusive Michigan.gif",
+  "naruto GIF.gif",
+  "Occupy V For Vendetta GIF by davidvnun.gif",
+  "season 3 GIF.gif",
+  "Snow Jumping GIF.gif",
+  "the simpsons GIF.gif",
+  "voldemort GIF.gif",
   "weed GIF.gif",
+  "World Cup Soccer GIF by Respective.gif",
 ];
 
 // El limite real (3 cada 5 min) lo aplica el servidor; esto es solo un

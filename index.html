@@ -6,7 +6,7 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=26" />
+  <link rel="stylesheet" href="css/style.css?v=28" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -40,6 +40,7 @@
 
   <!-- Pantalla de la sala -->
   <div id="room-screen" class="screen room-screen hidden">
+    <div id="mod-alert-banner" class="mod-alert-banner hidden" role="alert"></div>
     <aside class="sidebar glass-panel">
       <div class="sidebar-header">
         <span class="room-name"># general</span>
@@ -147,6 +148,7 @@
     <div id="call-panel-media" class="call-panel-media">
       <video id="call-remote-video" class="call-video call-video-main" autoplay playsinline muted></video>
       <video id="call-local-video" class="call-video call-video-pip hidden" autoplay playsinline muted></video>
+      <button type="button" id="call-switch-cam-btn" class="call-switch-cam-btn hidden" title="Cambiar de cámara">⇄</button>
     </div>
     <div class="call-panel-controls">
       <button type="button" id="call-mute-btn" class="btn btn-icon" title="Silenciar micrófono">🎤</button>
@@ -156,6 +158,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=57"></script>
+  <script type="module" src="js/app.js?v=59"></script>
 </body>
 </html>

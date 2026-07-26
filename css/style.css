@@ -183,6 +183,23 @@ body {
   padding: 14px;
 }
 
+.mod-alert-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  background: #b91c1c;
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  max-width: 90vw;
+  text-align: center;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -1193,6 +1210,39 @@ body {
 
 .call-panel.call-panel-maximized .call-video-main {
   height: 100%;
+}
+
+/* Mismo boton/color que el de cambiar camara sobre la propia vista previa
+   de la sala (.video-tile-switch-cam-btn), pero fijo en la esquina del
+   panel de llamada: el recuadro chico (pip) es muy angosto para que el
+   boton quepa encima sin taparlo entero, y ademas pip/grande se pueden
+   intercambiar tocando el video (ver el click de #call-panel-media), asi
+   que conviene que quede en una posicion fija en vez de "pegado" a un
+   video que puede cambiar de rol. */
+.call-switch-cam-btn {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--neon-pink, #ff2ec4);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  z-index: 3;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.call-switch-cam-btn:hover {
+  background: rgba(255, 46, 196, 0.18);
+  box-shadow: 0 0 12px rgba(255, 46, 196, 0.3);
 }
 
 .call-video-pip {
