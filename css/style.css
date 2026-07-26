@@ -1140,13 +1140,17 @@ body {
    incluido iOS viejo (iPhone 7) donde pedir pantalla completa sobre un
    div generico no esta disponible. */
 .call-panel.call-panel-maximized {
+  /* Con los cuatro margenes en 0 y SIN ancho/alto explicito, un elemento
+     "fixed" se dimensiona solo con el espacio realmente visible. Se probo
+     con 100vh/100dvh (ver historial), pero en Safari de iPhone 7 el calculo
+     de 100vh sigue contando el area que tapa la barra del navegador, y los
+     botones de abajo (call-panel-controls) quedaban fuera de la pantalla
+     visible aunque el elemento "existiera" mas abajo. Sin height fijo, el
+     alto real disponible es el que manda, en cualquier version de Safari. */
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  width: 100vw;
-  height: 100vh; /* respaldo para navegadores viejos que no entienden dvh */
-  height: 100dvh; /* alto real visible, sin contar la barra del navegador */
   border-radius: 0;
 }
 
@@ -1279,6 +1283,7 @@ body {
   justify-content: center;
   gap: 10px;
   padding: 10px;
+  flex-shrink: 0;
 }
 
 .call-panel-controls .btn-icon.muted,
