@@ -912,6 +912,13 @@ body {
 .gif-picker {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
+  /* Fijo, no "auto": con muchos gifs dentro de un contenedor de altura
+     maxima (max-height + overflow-y abajo), dejar la fila en "auto" hacia
+     que el navegador comprimiera cada fila para que entraran todas juntas
+     en vez de desplazarse con scroll a su tamano real (90px, ver .gif-picker
+     img). Con un valor fijo, cada fila respeta su alto real y el scroll
+     funciona como se espera. */
+  grid-auto-rows: 90px;
   gap: 6px;
   max-height: 220px;
   overflow-y: auto;
