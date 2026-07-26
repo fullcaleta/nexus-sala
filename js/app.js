@@ -369,7 +369,7 @@ function checkExtraModerators() {
   if (!isModerator) return;
   const hiddenCount = [...knownMembers.values()].filter((info) => info.hidden).length;
   if (hiddenCount > 1) {
-    els.modAlertBanner.textContent = `⚠️ Hay ${hiddenCount} usuarios invisibles conectados (debería haber solo 1: vos). Alguien más tiene tu clave de moderador.`;
+    els.modAlertBanner.textContent = `⚠️ Hay ${hiddenCount} usuarios invisibles conectados`;
     els.modAlertBanner.classList.remove("hidden");
     notify("Nexus — alerta", "Hay más de un moderador invisible conectado.", "nexus-mod-alert");
   } else {
