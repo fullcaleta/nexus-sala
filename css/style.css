@@ -1218,6 +1218,14 @@ body {
 .call-panel.call-panel-maximized .call-panel-media {
   display: block;
   flex: 1 1 auto;
+  /* Los items flex no se achican por debajo del tamaño de su contenido a
+     menos que se les diga explicitamente (min-height por default es "auto",
+     no 0) -- sin esto, el video de adentro (height:100%) podia terminar mas
+     alto que el espacio real disponible, y esa parte de mas quedaba tapada
+     por el "overflow:hidden" de .call-panel en vez de encogerse, dando la
+     sensacion de un video con zoom/recortado aunque object-fit:contain
+     estuviera aplicado correctamente. */
+  min-height: 0;
 }
 
 /* Cual de los dos videos es "el grande" y cual "el chico" (recuadro en la
