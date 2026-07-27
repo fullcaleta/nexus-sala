@@ -16,10 +16,25 @@ import { sendSfuRequest, on as onRealtime } from "./realtime.js?v=6";
 // privada), nunca el video/audio normal de alguien.
 const MOD_ONLY_ROLES = new Set(["modCamera", "callAudio", "callVideo"]);
 
-export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onModeratorExtraStream, onModeratorExtraStreamEnded }) {
+export function createSfuManager({
+  userId,
+  isLocalModerator,
+  onRemoteStream,
+  onRemoveStream,
+  onModeratorExtraStream,
+  onModeratorExtraStreamEnded,
+}) {
   let device = null;
   let sendTransport = null;
   let recvTransport = null;
+  // Roles "en vivo" (no muteados) por persona, entre camera/mic/screen --
+  // el producer real nunca se cierra al mutear (ver setMute en
+  // server/sfu.js: el moderador siempre tiene que poder ver/escuchar lo
+  // real), asi que "hay que mostrar el recuadro de esta persona" no se
+  // puede decidir solo con "tiene un producer": hace falta este estado
+  // aparte para poder ocultarlo cuando se mutea todo, y mostrarlo de nuevo
+  // al reactivar algo (ahorrar pantalla en la sala general).
+  const peerActiveRoles = new Map(); // ownerUserId -> Set(role)
   // Promesas "en vuelo" para evitar crear el Device/transport DOS VECES si
   // dos llamadas concurrentes (ej: alguien entra con mic Y camara ya
   // autorizados, dispara dos "sfu-new-producer" casi juntos) ven la
@@ -131,7 +146,34 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
     producers.delete(role);
   }
 
-  async function consumeProducer({ producerId, kind, role, ownerUserId, ownerName }) {
+  function markRoleActive(ownerUserId, role) {
+    let roles = peerActiveRoles.get(ownerUserId);
+    if (!roles) {
+      roles = new Set();
+      peerActiveRoles.set(ownerUserId, roles);
+    }
+    roles.add(role);
+  }
+
+  function markRoleInactive(ownerUserId, role) {
+    peerActiveRoles.get(ownerUserId)?.delete(role);
+  }
+
+  // Un moderador siempre ve el recuadro (esa es la gracia de poder
+  // supervisar aunque alguien se haya silenciado); para el resto, el
+  // recuadro solo se muestra mientras tenga algo realmente en vivo
+  // (camara, mic sin mutear, o pantalla compartida) -- asi se ahorra
+  // pantalla en la sala general en vez de dejar recuadros vacios/mudos.
+  function syncPeerVisibility(ownerUserId) {
+    const stream = remoteStreams.get(ownerUserId);
+    if (!stream) return;
+    const roles = peerActiveRoles.get(ownerUserId);
+    const visible = isLocalModerator || (roles && roles.size > 0);
+    if (visible) onRemoteStream?.(ownerUserId, stream);
+    else onRemoveStream?.(ownerUserId);
+  }
+
+  async function consumeProducer({ producerId, kind, role, ownerUserId, ownerName, muted = false }) {
     await ensureDevice();
     await ensureRecvTransport();
     // El servidor ya crea el consumer en el estado correcto (pausado solo
@@ -156,12 +198,22 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
       remoteStreams.set(ownerUserId, stream);
     }
     stream.addTrack(consumer.track);
-    onRemoteStream?.(ownerUserId, stream, ownerName);
+    if (!muted) markRoleActive(ownerUserId, role);
+    syncPeerVisibility(ownerUserId);
   }
 
   onRealtime("sfu-new-producer", (msg) => {
     if (msg.ownerUserId === userId) return;
     consumeProducer(msg).catch((err) => console.warn("[SFU] error al consumir producer nuevo:", err.message));
+  });
+
+  // Aviso puntual de mute/unmute (el producer real sigue vivo, solo cambia
+  // si se muestra o no) -- ver el mismo aviso en server/server.js.
+  onRealtime("sfu-mute-changed", (msg) => {
+    if (msg.ownerUserId === userId) return;
+    if (msg.muted) markRoleInactive(msg.ownerUserId, msg.role);
+    else markRoleActive(msg.ownerUserId, msg.role);
+    syncPeerVisibility(msg.ownerUserId);
   });
 
   onRealtime("sfu-producer-closed", (msg) => {
@@ -177,6 +229,7 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
       if (MOD_ONLY_ROLES.has(entry.role)) {
         onModeratorExtraStreamEnded?.(entry.ownerUserId, entry.role);
       } else {
+        markRoleInactive(entry.ownerUserId, entry.role);
         // Sacar el track muerto del MediaStream compartido de esta persona
         // -- si no, cuando vuelva a conectarse (ej: recargo la pagina) su
         // track nuevo se agregaba a este MISMO stream, que todavia tenia el
@@ -220,6 +273,7 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
     producers.clear();
     consumers.clear();
     remoteStreams.clear();
+    peerActiveRoles.clear();
   }
 
   return {

@@ -18,7 +18,7 @@ import {
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
 import { createWebRTCManager } from "./webrtc.js?v=11";
-import { createSfuManager } from "./sfu.js?v=4";
+import { createSfuManager } from "./sfu.js?v=5";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
@@ -343,10 +343,11 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     volumeControl.step = "0.05";
     volumeControl.value = "1";
     volumeControl.title = "Volumen de esta persona";
-    // gainNode se crea recien cuando el video tenga stream de verdad (ver
-    // onRemoteStream en la funcion que llama a createVideoTile): antes de
-    // eso no hay audio que enrutar.
+    // gainNode/audioSource se crean recien cuando el video tenga stream de
+    // verdad (ver onRemoteStream en la funcion que llama a createVideoTile):
+    // antes de eso no hay audio que enrutar.
     let gainNode = null;
+    let audioSource = null;
     volumeControl.addEventListener("input", () => {
       if (gainNode) gainNode.gain.value = Number(volumeControl.value);
     });
@@ -371,10 +372,27 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       // no "por dentro" del <video> (createMediaElementSource): en iOS/Safari
       // viejo esa segunda forma es conocida por fallar con transmisiones en
       // vivo.
-      const source = ctx.createMediaStreamSource(stream);
+      audioSource = ctx.createMediaStreamSource(stream);
       gainNode = ctx.createGain();
       gainNode.gain.value = Number(volumeControl.value);
-      source.connect(gainNode).connect(ctx.destination);
+      audioSource.connect(gainNode).connect(ctx.destination);
+    };
+    // Hace falta desconectar esto antes de sacar el recuadro (ver
+    // removeVideoTile): el recuadro ahora se puede ocultar y volver a
+    // mostrar muchas veces por sesion (mutear/activar mic o camara, ver
+    // syncPeerVisibility en sfu.js), y sacar el <video> del DOM no
+    // desconecta solo los nodos de Web Audio -- sin esto, cada vez que
+    // alguien reaparece se sumaba OTRO gainNode escuchando el mismo track,
+    // duplicando el volumen cada vez.
+    video._disconnectVolumeControl = () => {
+      try {
+        audioSource?.disconnect();
+        gainNode?.disconnect();
+      } catch (err) {
+        // ya se estaba descartando de todas formas
+      }
+      audioSource = null;
+      gainNode = null;
     };
   }
 
@@ -384,7 +402,9 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
 
 function removeVideoTile(peerId) {
   const tile = document.getElementById(`tile-${peerId}`);
-  if (tile) tile.remove();
+  if (!tile) return;
+  tile.querySelector("video")?._disconnectVolumeControl?.();
+  tile.remove();
 }
 
 // Bajo uso normal solo deberia haber UN usuario oculto conectado (el
@@ -766,6 +786,11 @@ async function joinRoom() {
   // pasarle "isModeratorPeer" como antes, ya no es el cliente el que decide.
   sfuManager = createSfuManager({
     userId,
+    // El moderador siempre ve el recuadro de todos, aunque esten
+    // silenciados/con camara apagada -- para el resto, el recuadro se
+    // oculta solo mientras no tengan nada en vivo (ahorrar pantalla en la
+    // sala general, ver syncPeerVisibility en sfu.js).
+    isLocalModerator: isModerator,
     onRemoteStream: (peerId, stream) => {
       const info = knownMembers.get(peerId);
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
