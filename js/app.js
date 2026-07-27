@@ -354,22 +354,15 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
     // Se expone en el propio elemento para que quien asigna el stream (mas
     // abajo) pueda conectar el audio real la primera vez que llega.
     video._connectVolumeControl = () => {
-      if (gainNode) {
-        console.log(`[NEXUS-AUDIO-DEBUG] _connectVolumeControl(${tile.id}): ya conectado, no hago nada`);
-        return;
-      }
+      if (gainNode) return; // ya conectado, no se puede conectar dos veces
       const stream = video.srcObject;
-      if (!stream) {
-        console.log(`[NEXUS-AUDIO-DEBUG] _connectVolumeControl(${tile.id}): sin stream todavia`);
-        return;
-      }
+      if (!stream) return;
       // El video y el audio de la misma persona no siempre llegan en el
       // mismo momento: si todavia no hay ninguna pista de audio en la
       // transmision, createMediaStreamSource tira error. Se espera a que
       // llegue (evento "addtrack" de la propia MediaStream) en vez de
       // fallar -- el video ya se ve igual, esto solo es para el audio.
       if (stream.getAudioTracks().length === 0) {
-        console.log(`[NEXUS-AUDIO-DEBUG] _connectVolumeControl(${tile.id}): sin pista de audio todavia, espero "addtrack"`);
         stream.addEventListener("addtrack", () => video._connectVolumeControl(), { once: true });
         return;
       }
@@ -382,11 +375,6 @@ function createVideoTile(peerId, name, { isLocal = false, isSelf = false } = {})
       gainNode = ctx.createGain();
       gainNode.gain.value = Number(volumeControl.value);
       source.connect(gainNode).connect(ctx.destination);
-      const track = stream.getAudioTracks()[0];
-      console.log(
-        `[NEXUS-AUDIO-DEBUG] _connectVolumeControl(${tile.id}): CONECTADO. ctx.state=${ctx.state}, track.enabled=${track.enabled}, track.muted=${track.muted}, track.readyState=${track.readyState}`
-      );
-      ctx.addEventListener?.("statechange", () => console.log(`[NEXUS-AUDIO-DEBUG] AudioContext cambio de estado a: ${ctx.state}`));
     };
   }
 
