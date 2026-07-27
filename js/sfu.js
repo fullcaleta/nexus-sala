@@ -97,15 +97,17 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
   async function consumeProducer({ producerId, kind, role, ownerUserId, ownerName }) {
     await ensureDevice();
     await ensureRecvTransport();
-    const { id, rtpParameters, initiallyMuted } = await sendSfuRequest("sfu-consume", {
+    // El servidor ya crea el consumer en el estado correcto (pausado solo
+    // si corresponde) -- no hace falta un segundo mensaje de "resumir"
+    // (antes existia, era "dispara y olvida" sin reintentar, lo que podia
+    // dejar audio/video pausado para siempre en silencio si ese mensaje se
+    // perdia).
+    const { id, rtpParameters } = await sendSfuRequest("sfu-consume", {
       producerId,
       rtpCapabilities: device.rtpCapabilities,
     });
     const consumer = await recvTransport.consume({ id, producerId, kind, rtpParameters });
     consumers.set(consumer.id, { consumer, ownerUserId, role });
-    if (!initiallyMuted) {
-      sendSfuRequest("sfu-resume-consumer", { consumerId: consumer.id }).catch(() => {});
-    }
 
     if (MOD_ONLY_ROLES.has(role)) {
       onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track);
