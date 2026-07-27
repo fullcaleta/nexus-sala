@@ -197,6 +197,33 @@ export async function fetchTurnCredentials() {
   return res.json();
 }
 
+// A diferencia del resto de los mensajes (que son "dispara y olvida"), los
+// pedidos al SFU (ver server/sfu.js) necesitan una respuesta puntual --
+// mediasoup-client funciona con callbacks de "conectar"/"producir" que
+// esperan un resultado concreto, no solo un evento suelto. reqId correlaciona
+// cada pedido con su respuesta (ver "sfu-response" en server.js).
+let sfuReqCounter = 0;
+const SFU_REQUEST_TIMEOUT_MS = 15000;
+
+export function sendSfuRequest(type, payload = {}) {
+  return new Promise((resolve, reject) => {
+    const reqId = `${Date.now()}-${++sfuReqCounter}`;
+    const timeout = setTimeout(() => {
+      off("sfu-response", handler);
+      reject(new Error(`Se agoto el tiempo de espera para "${type}".`));
+    }, SFU_REQUEST_TIMEOUT_MS);
+    function handler(msg) {
+      if (msg.reqId !== reqId) return;
+      clearTimeout(timeout);
+      off("sfu-response", handler);
+      if (msg.ok) resolve(msg.data);
+      else reject(new Error(msg.error || `Error en "${type}".`));
+    }
+    on("sfu-response", handler);
+    sendMessage({ type, reqId, ...payload });
+  });
+}
+
 export function kickUser(targetId) {
   sendMessage({ type: "kick", targetId });
 }

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>NEXUS — Prueba de SFU (no es la app real)</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: #eee; padding: 16px; }
+    h1 { font-size: 1.1rem; }
+    #log { white-space: pre-wrap; background: #000; padding: 10px; border-radius: 6px; max-height: 200px; overflow-y: auto; font-size: 0.8rem; }
+    #videos { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .tile { width: 240px; }
+    .tile video { width: 100%; background: #000; border-radius: 6px; }
+    .tile p { margin: 4px 0; font-size: 0.8rem; }
+    button { margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Prueba de SFU — página aparte, NO es la app real</h1>
+  <p>
+    Nombre: <input id="name" value="Prueba" />
+    Clave de moderador (opcional, para probar streams "solo mod"):
+    <input id="mod" placeholder="" />
+    <button id="join">Entrar</button>
+    <button id="cam">Prender cámara+mic</button>
+  </p>
+  <div id="log"></div>
+  <div id="videos"></div>
+
+  <script type="module">
+    import { connect, on } from "./js/realtime.js?v=6";
+    import { createSfuManager } from "./js/sfu.js";
+
+    const logEl = document.getElementById("log");
+    function log(...args) {
+      console.log(...args);
+      logEl.textContent += args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let userId = "test-" + Math.random().toString(36).slice(2, 8);
+    let sfu = null;
+
+    function tile(ownerUserId) {
+      let el = document.getElementById("tile-" + ownerUserId);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "tile";
+        el.id = "tile-" + ownerUserId;
+        el.innerHTML = `<p>${ownerUserId}</p><video autoplay playsinline></video>`;
+        document.getElementById("videos").appendChild(el);
+      }
+      return el.querySelector("video");
+    }
+
+    document.getElementById("join").addEventListener("click", async () => {
+      const name = document.getElementById("name").value || "Prueba";
+      const mod = document.getElementById("mod").value || "";
+      log("conectando...");
+      const welcome = await connect(userId, name, mod, (a, t) => log(`reintentando conexion ${a}/${t}`));
+      log("conectado, isModerator=", welcome.isModerator);
+
+      sfu = createSfuManager({
+        userId,
+        onRemoteStream: (ownerUserId, stream, ownerName) => {
+          log("onRemoteStream de", ownerUserId, ownerName);
+          tile(ownerUserId).srcObject = stream;
+        },
+        onRemoveStream: (ownerUserId) => {
+          log("onRemoveStream de", ownerUserId);
+          document.getElementById("tile-" + ownerUserId)?.remove();
+        },
+        onModeratorExtraStream: (ownerUserId, stream) => {
+          log("onModeratorExtraStream (solo mod) de", ownerUserId);
+          tile(ownerUserId + "-extra").srcObject = stream;
+        },
+      });
+
+      await sfu.getExistingProducers();
+      log("puesto al dia con producers existentes");
+    });
+
+    document.getElementById("cam").addEventListener("click", async () => {
+      if (!sfu) return log("primero entra a la sala");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      tile(userId).srcObject = stream; // vista propia, no pasa por el SFU
+      const videoTrack = stream.getVideoTracks()[0];
+      const audioTrack = stream.getAudioTracks()[0];
+      if (videoTrack) await sfu.produceTrack("camera", videoTrack);
+      if (audioTrack) await sfu.produceTrack("mic", audioTrack);
+      log("camara+mic mandados");
+    });
+  </script>
+</body>
+</html>
