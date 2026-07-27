@@ -16,7 +16,7 @@ import { sendSfuRequest, on as onRealtime } from "./realtime.js?v=6";
 // privada), nunca el video/audio normal de alguien.
 const MOD_ONLY_ROLES = new Set(["modCamera", "callAudio", "callVideo"]);
 
-export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onModeratorExtraStream }) {
+export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onModeratorExtraStream, onModeratorExtraStreamEnded }) {
   let device = null;
   let sendTransport = null;
   let recvTransport = null;
@@ -132,7 +132,16 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
       if (entry.consumer.producerId !== msg.producerId) continue;
       entry.consumer.close();
       consumers.delete(consumerId);
-      if (!MOD_ONLY_ROLES.has(entry.role)) onRemoveStream?.(entry.ownerUserId);
+      // El track del consumer no dispara "ended" al cerrarse asi (.close()
+      // llama a track.stop() por dentro, y stop() manual nunca dispara ese
+      // evento, solo lo hace un corte externo de verdad) -- por eso la
+      // limpieza de estos streams extra no puede depender de escuchar
+      // "ended" en el propio track, hace falta avisar directo aca.
+      if (MOD_ONLY_ROLES.has(entry.role)) {
+        onModeratorExtraStreamEnded?.(entry.ownerUserId, entry.role);
+      } else {
+        onRemoveStream?.(entry.ownerUserId);
+      }
     }
   });
 

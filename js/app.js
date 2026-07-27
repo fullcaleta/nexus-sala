@@ -18,7 +18,7 @@ import {
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
 import { createWebRTCManager } from "./webrtc.js?v=11";
-import { createSfuManager } from "./sfu.js";
+import { createSfuManager } from "./sfu.js?v=2";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
@@ -777,6 +777,16 @@ async function joinRoom() {
       removeVideoTile(peerId);
       removeVideoTile(`${peerId}-modcam`);
     },
+    // Se dispara cuando el servidor avisa que un producer "extra" (solo
+    // moderador) se cerro de verdad -- no se puede usar el evento "ended"
+    // del propio track para esto: consumer.close() llama a track.stop() por
+    // dentro, y un stop() hecho por JS nunca dispara "ended" (ese evento es
+    // solo para cortes externos de verdad), asi que sin este aviso las
+    // ventanas de camara real/audio de llamada se quedaban para siempre
+    // aunque la llamada ya hubiera terminado.
+    onModeratorExtraStreamEnded: (peerId, role) => {
+      removeVideoTile(role === "callAudio" ? `${peerId}-modcall-audio` : `${peerId}-modcam`);
+    },
     // Solo le llega algo a esto si yo soy moderador: o bien la camara real
     // de alguien que esta compartiendo pantalla (ver sendCameraToModerators
     // en sfu.js), o bien el audio/video de una llamada privada ajena que
@@ -794,13 +804,11 @@ async function joinRoom() {
         const video = createVideoTile(`${peerId}-modcall-audio`, `${info?.name || "Usuario"} (audio de llamada)`);
         video.srcObject = stream;
         video._connectVolumeControl?.();
-        track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcall-audio`));
         return;
       }
       const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
       video.srcObject = stream;
       video._connectVolumeControl?.();
-      track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
     },
   });
   // Pone al dia sobre quien ya estaba mandando camara/mic antes de entrar
