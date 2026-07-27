@@ -15,8 +15,29 @@ import {
   sendCallHangup,
   kickUser,
   disconnect,
-} from "./realtime.js?v=5";
-import { createWebRTCManager } from "./webrtc.js?v=9";
+  fetchTurnCredentials,
+} from "./realtime.js?v=6";
+import { createWebRTCManager } from "./webrtc.js?v=10";
+
+// STUN no necesita credenciales; TURN sí, y esas se piden frescas al
+// servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
+// en vez de tenerlas escritas fijas en este archivo publico.
+async function buildIceServers() {
+  const stun = { urls: "stun:nexus-sala.duckdns.org:3478" };
+  try {
+    const { username, credential } = await fetchTurnCredentials();
+    return {
+      iceServers: [
+        stun,
+        { urls: "turn:nexus-sala.duckdns.org:3478", username, credential },
+        { urls: "turn:nexus-sala.duckdns.org:3478?transport=tcp", username, credential },
+      ],
+    };
+  } catch (err) {
+    console.warn("[NEXUS] no se pudieron obtener credenciales TURN, sigo solo con STUN:", err.message);
+    return { iceServers: [stun] };
+  }
+}
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -724,9 +745,11 @@ async function joinRoom() {
   updateMicButtonUI();
   updateCamButtonUI();
 
+  const iceServers = await buildIceServers();
   webrtcManager = createWebRTCManager({
     userId,
     localStream,
+    iceServers,
     onRemoteStream: (peerId, stream) => {
       const info = knownMembers.get(peerId);
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie

@@ -1,21 +1,11 @@
-import { sendSignal, on as onRealtime } from "./realtime.js?v=5";
+import { sendSignal, on as onRealtime } from "./realtime.js?v=6";
 
-// Servidor TURN propio (coturn) corriendo en tu PC.
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: "stun:nexus-sala.duckdns.org:3478" },
-    {
-      urls: "turn:nexus-sala.duckdns.org:3478",
-      username: "nexususer",
-      credential: "AKgSTdMrTRG13VGy3fAr",
-    },
-    {
-      urls: "turn:nexus-sala.duckdns.org:3478?transport=tcp",
-      username: "nexususer",
-      credential: "AKgSTdMrTRG13VGy3fAr",
-    },
-  ],
-};
+// El STUN no necesita credenciales (solo ayuda a descubrir la IP publica),
+// asi que este fallback sirve incluso si todavia no se pudieron pedir las
+// credenciales TURN del servidor (ver fetchTurnCredentials en realtime.js y
+// buildIceServers en app.js). Sin TURN, las llamadas entre redes que
+// bloquean conexion directa fallarian, pero es mejor que nada.
+const FALLBACK_ICE_SERVERS = { iceServers: [{ urls: "stun:nexus-sala.duckdns.org:3478" }] };
 
 // localStream es un MediaStream mutable que vive en app.js: puede empezar
 // vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
@@ -23,6 +13,7 @@ const ICE_SERVERS = {
 export function createWebRTCManager({
   userId,
   localStream,
+  iceServers = FALLBACK_ICE_SERVERS,
   onRemoteStream,
   onRemoveStream,
   onModeratorExtraStream,
@@ -102,7 +93,7 @@ export function createWebRTCManager({
   function getOrCreatePeerConnection(peerId) {
     if (peerConnections.has(peerId)) return peerConnections.get(peerId);
 
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+    const pc = new RTCPeerConnection(iceServers);
     peerConnections.set(peerId, pc);
     makingOffer.set(peerId, false);
 
@@ -391,7 +382,7 @@ export function createWebRTCManager({
     let pc = callPeerConnections.get(peerId);
     if (pc) return pc;
 
-    pc = new RTCPeerConnection(ICE_SERVERS);
+    pc = new RTCPeerConnection(iceServers);
     callPeerConnections.set(peerId, pc);
     callMakingOffer.set(peerId, false);
 

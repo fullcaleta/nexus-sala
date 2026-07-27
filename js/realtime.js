@@ -185,6 +185,18 @@ export function mediaUrl(fileId) {
   return `${UPLOAD_BASE_URL}/uploads/${encodeURIComponent(fileId)}`;
 }
 
+// Credenciales TURN de corta duracion (ver /turn-credentials en server.js):
+// reemplazan al usuario/clave fijos que antes estaban escritos para siempre
+// en este mismo archivo. Se piden una vez al entrar a la sala (ver app.js).
+export async function fetchTurnCredentials() {
+  if (!uploadToken) throw new Error("Todavía no estás conectado a la sala.");
+  const res = await fetch(`${UPLOAD_BASE_URL}/turn-credentials`, {
+    headers: { "X-Upload-Token": uploadToken },
+  });
+  if (!res.ok) throw new Error(`No se pudieron obtener credenciales TURN (error ${res.status}).`);
+  return res.json();
+}
+
 export function kickUser(targetId) {
   sendMessage({ type: "kick", targetId });
 }
