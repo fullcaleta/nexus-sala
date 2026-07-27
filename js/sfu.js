@@ -177,6 +177,19 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
       if (MOD_ONLY_ROLES.has(entry.role)) {
         onModeratorExtraStreamEnded?.(entry.ownerUserId, entry.role);
       } else {
+        // Sacar el track muerto del MediaStream compartido de esta persona
+        // -- si no, cuando vuelva a conectarse (ej: recargo la pagina) su
+        // track nuevo se agregaba a este MISMO stream, que todavia tenia el
+        // viejo adentro. Un <video>/Web Audio con dos tracks del mismo tipo
+        // en un MediaStream puede terminar mostrando/escuchando el viejo
+        // (muerto) en vez del nuevo, de forma inconsistente segun el
+        // navegador -- eso explicaba camara que no vuelve a aparecer, o
+        // mic que a veces no se escucha, despues de recargar.
+        const stream = remoteStreams.get(entry.ownerUserId);
+        if (stream) {
+          stream.removeTrack(entry.consumer.track);
+          if (stream.getTracks().length === 0) remoteStreams.delete(entry.ownerUserId);
+        }
         onRemoveStream?.(entry.ownerUserId);
       }
     }
