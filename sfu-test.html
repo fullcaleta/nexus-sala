@@ -89,7 +89,9 @@
     document.getElementById("cam").addEventListener("click", async () => {
       if (!sfu) return log("primero entra a la sala");
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      tile(userId).srcObject = localStream; // vista propia, no pasa por el SFU
+      const selfVideo = tile(userId);
+      selfVideo.srcObject = localStream; // vista propia, no pasa por el SFU
+      selfVideo.muted = true; // si no, cada uno escucha su propio mic de vuelta (eco)
       const videoTrack = localStream.getVideoTracks()[0];
       const audioTrack = localStream.getAudioTracks()[0];
       if (videoTrack) await sfu.produceTrack("camera", videoTrack);
