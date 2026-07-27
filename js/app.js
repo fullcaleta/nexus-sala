@@ -22,15 +22,19 @@ import { createWebRTCManager } from "./webrtc.js?v=10";
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
 // en vez de tenerlas escritas fijas en este archivo publico.
+// Puerto 3479 (era el original, 3478) porque el nuevo servidor (laptop
+// Kali) ya tenia otro programa (AgentDVR, camaras de seguridad) usando
+// varios puertos seguidos a partir del 3478 -- se corrio a un puerto lejos
+// de ese rango para no chocar. Ver TURN_PORT en docker/.env.production.
 async function buildIceServers() {
-  const stun = { urls: "stun:nexus-sala.duckdns.org:3478" };
+  const stun = { urls: "stun:nexus-sala.duckdns.org:33478" };
   try {
     const { username, credential } = await fetchTurnCredentials();
     return {
       iceServers: [
         stun,
-        { urls: "turn:nexus-sala.duckdns.org:3478", username, credential },
-        { urls: "turn:nexus-sala.duckdns.org:3478?transport=tcp", username, credential },
+        { urls: "turn:nexus-sala.duckdns.org:33478", username, credential },
+        { urls: "turn:nexus-sala.duckdns.org:33478?transport=tcp", username, credential },
       ],
     };
   } catch (err) {

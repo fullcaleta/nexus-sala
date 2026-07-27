@@ -5,7 +5,7 @@ import { sendSignal, on as onRealtime } from "./realtime.js?v=6";
 // credenciales TURN del servidor (ver fetchTurnCredentials en realtime.js y
 // buildIceServers en app.js). Sin TURN, las llamadas entre redes que
 // bloquean conexion directa fallarian, pero es mejor que nada.
-const FALLBACK_ICE_SERVERS = { iceServers: [{ urls: "stun:nexus-sala.duckdns.org:3478" }] };
+const FALLBACK_ICE_SERVERS = { iceServers: [{ urls: "stun:nexus-sala.duckdns.org:33478" }] };
 
 // localStream es un MediaStream mutable que vive en app.js: puede empezar
 // vacio (sala solo de texto) y ir sumando el track de audio y/o video cuando
