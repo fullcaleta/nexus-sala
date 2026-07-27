@@ -784,23 +784,17 @@ async function joinRoom() {
     onModeratorExtraStream: (peerId, stream, track) => {
       const info = knownMembers.get(peerId);
       if (track.kind === "audio") {
-        // Mismo motivo que el audio de la propia llamada (ver
-        // connectCallAudio): un <audio autoplay> con sonido de verdad no
-        // siempre arranca solo (sobre todo en Safari/iOS), asi que se
-        // rutea por Web Audio API en vez de depender del autoplay nativo.
-        const ctx = getSharedAudioContext();
-        const source = ctx.createMediaStreamSource(new MediaStream([track]));
-        const gain = ctx.createGain();
-        gain.gain.value = 1;
-        source.connect(gain).connect(ctx.destination);
-        track.addEventListener("ended", () => {
-          try {
-            source.disconnect();
-            gain.disconnect();
-          } catch (err) {
-            // ya se estaba descartando de todas formas
-          }
-        });
+        // Antes esto conectaba el audio directo (Web Audio) sin ningun
+        // recuadro ni control -- una llamada privada sin camara (la mayoria,
+        // arranca solo con microfono) le quedaba al moderador sin forma de
+        // bajarle el volumen. Se usa el mismo recuadro que la camara real
+        // (con su propio control de volumen ya resuelto en
+        // _connectVolumeControl vía Web Audio), aunque no haya video que
+        // mostrar -- misma idea que "esta persona tiene el video apagado".
+        const video = createVideoTile(`${peerId}-modcall-audio`, `${info?.name || "Usuario"} (audio de llamada)`);
+        video.srcObject = stream;
+        video._connectVolumeControl?.();
+        track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcall-audio`));
         return;
       }
       const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
