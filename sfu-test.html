@@ -22,6 +22,9 @@
     <input id="mod" placeholder="" />
     <button id="join">Entrar</button>
     <button id="cam">Prender cámara+mic</button>
+    <button id="mute-mic">Silenciar/activar mic</button>
+    <button id="mute-cam">Silenciar/activar cámara</button>
+    <button id="mod-camera">Mandar cámara "extra" (modCamera)</button>
   </p>
   <div id="log"></div>
   <div id="videos"></div>
@@ -79,15 +82,41 @@
       log("puesto al dia con producers existentes");
     });
 
+    let localStream = null;
+    let micMuted = false;
+    let camMuted = false;
+
     document.getElementById("cam").addEventListener("click", async () => {
       if (!sfu) return log("primero entra a la sala");
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      tile(userId).srcObject = stream; // vista propia, no pasa por el SFU
-      const videoTrack = stream.getVideoTracks()[0];
-      const audioTrack = stream.getAudioTracks()[0];
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      tile(userId).srcObject = localStream; // vista propia, no pasa por el SFU
+      const videoTrack = localStream.getVideoTracks()[0];
+      const audioTrack = localStream.getAudioTracks()[0];
       if (videoTrack) await sfu.produceTrack("camera", videoTrack);
       if (audioTrack) await sfu.produceTrack("mic", audioTrack);
       log("camara+mic mandados");
+    });
+
+    document.getElementById("mute-mic").addEventListener("click", () => {
+      if (!sfu) return log("primero entra a la sala");
+      micMuted = !micMuted;
+      sfu.setMute("mic", micMuted);
+      log("mic muted =", micMuted, "(revisa en la OTRA pestaña si se corta/vuelve el audio)");
+    });
+
+    document.getElementById("mute-cam").addEventListener("click", () => {
+      if (!sfu) return log("primero entra a la sala");
+      camMuted = !camMuted;
+      sfu.setMute("camera", camMuted);
+      log("camera muted =", camMuted, "(revisa en la OTRA pestaña si se corta/vuelve el video)");
+    });
+
+    document.getElementById("mod-camera").addEventListener("click", async () => {
+      if (!sfu || !localStream) return log("primero entra a la sala y prende la camara");
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (!videoTrack) return log("no hay video para mandar");
+      await sfu.sendCameraToModerators(videoTrack.clone());
+      log('modCamera mandado -- solo deberia verse en una pestana que entro CON la clave de moderador');
     });
   </script>
 </body>
