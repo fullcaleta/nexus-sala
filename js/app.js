@@ -241,6 +241,7 @@ let callPeerId = null;
 let callPeerName = "";
 let callLocalStream = null; // microfono (+ camara si se prende) de la llamada activa
 let callVideoOn = false;
+let callAudioCloneForMod = null; // copia independiente que recibe el moderador, ver startOutgoingCall/acceptIncomingCall
 let callRingTimeout = null;
 const callRemoteTracks = new Set(); // ver handleCallTrack: se reconstruye la stream entera cada vez
 
@@ -973,7 +974,13 @@ async function joinRoom() {
     }
     callState = "active";
     webrtcManager.startCallOffer(callPeerId, callLocalStream);
-    sfuManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+    // Clon de verdad (no la misma referencia): "enabled" es una propiedad
+    // POR TRACK, asi que si se mandara el mismo track de arriba, mutear la
+    // llamada (mas abajo, con track.enabled = false) tambien apagaba esta
+    // copia -- justo lo que se queria evitar (que el moderador siga
+    // escuchando aunque la llamada este silenciada).
+    callAudioCloneForMod = callLocalStream.getAudioTracks()[0].clone();
+    sfuManager.sendCallTrackToModerators("audio", callAudioCloneForMod);
     showCallPanel();
   });
 
@@ -1247,6 +1254,10 @@ function resetCallState() {
   } catch (err) {
     console.warn("[NEXUS-CALL] error limpiando la conexion de la llamada:", err);
   }
+  if (callAudioCloneForMod) {
+    callAudioCloneForMod.stop();
+    callAudioCloneForMod = null;
+  }
   try {
     stopCallLocalStream();
   } catch (err) {
@@ -1340,7 +1351,11 @@ async function acceptIncomingCall() {
   webrtcManager.prepareCallReceiver(peerId, callLocalStream);
   sendCallAccept(peerId);
   callState = "active";
-  sfuManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+  // Ver el mismo comentario en startOutgoingCall: tiene que ser un clon de
+  // verdad, no la misma referencia, para que mutear la llamada no apague
+  // tambien lo que recibe el moderador.
+  callAudioCloneForMod = callLocalStream.getAudioTracks()[0].clone();
+  sfuManager.sendCallTrackToModerators("audio", callAudioCloneForMod);
   openDmWith(peerId, callPeerName);
   showCallPanel();
 }
