@@ -17,7 +17,8 @@ import {
   disconnect,
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
-import { createWebRTCManager } from "./webrtc.js?v=10";
+import { createWebRTCManager } from "./webrtc.js?v=11";
+import { createSfuManager } from "./sfu.js";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
@@ -209,7 +210,8 @@ function stopCallRingtone() {
 }
 
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
-let webrtcManager = null;
+let webrtcManager = null; // solo llamada privada 1 a 1 (ver webrtc.js)
+let sfuManager = null; // video/audio normal de la sala, via el SFU (ver sfu.js)
 let micOn = false;
 let camOn = false;
 let facingMode = "user";
@@ -701,7 +703,8 @@ async function autoAcquireIfAlreadyGranted() {
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const track = micStream.getAudioTracks()[0];
       localStream.addTrack(track);
-      webrtcManager.addLocalTrack(track);
+      await sfuManager.produceTrack("mic", track);
+      sfuManager.setMute("mic", !micOn);
     } catch (err) {
       // permiso revocado justo ahora u otro problema: se pedira con el boton
     }
@@ -713,7 +716,8 @@ async function autoAcquireIfAlreadyGranted() {
       localStream.addTrack(track);
       const localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
-      webrtcManager.addLocalTrack(track);
+      await sfuManager.produceTrack("camera", track);
+      sfuManager.setMute("camera", !camOn);
     } catch (err) {
       // permiso revocado justo ahora u otro problema: se pedira con el boton
     }
@@ -755,10 +759,13 @@ async function joinRoom() {
   updateCamButtonUI();
 
   const iceServers = await buildIceServers();
-  webrtcManager = createWebRTCManager({
+  // Llamada privada 1 a 1 (sin cambios, sigue siendo conexion directa).
+  webrtcManager = createWebRTCManager({ userId, iceServers, onCallTrack: handleCallTrack, onCallEnded: handleCallEnded });
+  // Video/audio normal de la sala: pasa por el SFU (server/sfu.js). El
+  // servidor es quien decide que le llega a cada quien -- no hace falta
+  // pasarle "isModeratorPeer" como antes, ya no es el cliente el que decide.
+  sfuManager = createSfuManager({
     userId,
-    localStream,
-    iceServers,
     onRemoteStream: (peerId, stream) => {
       const info = knownMembers.get(peerId);
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
@@ -772,7 +779,7 @@ async function joinRoom() {
     },
     // Solo le llega algo a esto si yo soy moderador: o bien la camara real
     // de alguien que esta compartiendo pantalla (ver sendCameraToModerators
-    // en webrtc.js), o bien el audio/video de una llamada privada ajena que
+    // en sfu.js), o bien el audio/video de una llamada privada ajena que
     // estoy supervisando (ver sendCallTrackToModerators).
     onModeratorExtraStream: (peerId, stream, track) => {
       const info = knownMembers.get(peerId);
@@ -801,19 +808,10 @@ async function joinRoom() {
       video._connectVolumeControl?.();
       track.addEventListener("ended", () => removeVideoTile(`${peerId}-modcam`));
     },
-    onCallTrack: handleCallTrack,
-    onCallEnded: handleCallEnded,
-    isModeratorPeer: (peerId) => knownMembers.get(peerId)?.hidden === true,
   });
-  // Sincronizar el estado interno ANTES de agregar cualquier track: sin esto,
-  // el track recien adquirido en autoAcquireIfAlreadyGranted se manda
-  // habilitado por defecto a todo el mundo, no solo al moderador.
-  webrtcManager.setTrackEnabled("audio", micOn);
-  webrtcManager.setTrackEnabled("video", camOn);
-
-  for (const peerId of knownMembers.keys()) {
-    if (peerId !== userId) webrtcManager.handlePeerJoined(peerId);
-  }
+  // Pone al dia sobre quien ya estaba mandando camara/mic antes de entrar
+  // (equivalente SFU de recorrer welcome.members en el mesh viejo).
+  await sfuManager.getExistingProducers();
   renderMemberList();
   checkExtraModerators();
 
@@ -823,7 +821,8 @@ async function joinRoom() {
 
   addRoomListener("presence-joined", (msg) => {
     knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden, ip: msg.ip });
-    webrtcManager.handlePeerJoined(msg.userId);
+    // No hace falta avisarle nada al SFU: si esta persona ya esta mandando
+    // camara/mic, el aviso llega solo por "sfu-new-producer" (ver sfu.js).
     renderMemberList();
     checkExtraModerators();
     if (!msg.hidden) notify("Nexus", `${msg.name} entró a la sala`, "nexus-presence");
@@ -831,7 +830,8 @@ async function joinRoom() {
 
   addRoomListener("presence-left", (msg) => {
     knownMembers.delete(msg.userId);
-    webrtcManager.handlePeerLeft(msg.userId);
+    // Misma idea: la limpieza de sus producers/consumers llega sola por
+    // "sfu-producer-closed" cuando el servidor cierra su conexion.
     removeVideoTile(msg.userId);
     renderMemberList();
     checkExtraModerators();
@@ -946,7 +946,7 @@ async function joinRoom() {
     }
     callState = "active";
     webrtcManager.startCallOffer(callPeerId, callLocalStream);
-    webrtcManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+    sfuManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
     showCallPanel();
   });
 
@@ -975,6 +975,7 @@ function cleanupAndReturnToJoinScreen() {
   roomListeners.length = 0;
   resetCallState();
   if (webrtcManager) webrtcManager.destroy();
+  if (sfuManager) sfuManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   // si se salio de la sala mientras se compartia pantalla, tanto el
   // microfono mezclado como la camara real siguen vivos aparte (no son
@@ -1170,8 +1171,8 @@ function resetCallState() {
   try {
     if (callPeerId) {
       webrtcManager?.endCall(callPeerId);
-      webrtcManager?.stopCallTrackToModerators("audio");
-      webrtcManager?.stopCallTrackToModerators("video");
+      sfuManager?.stopCallTrackToModerators("audio");
+      sfuManager?.stopCallTrackToModerators("video");
     }
   } catch (err) {
     console.warn("[NEXUS-CALL] error limpiando la conexion de la llamada:", err);
@@ -1268,7 +1269,7 @@ async function acceptIncomingCall() {
   webrtcManager.prepareCallReceiver(peerId, callLocalStream);
   sendCallAccept(peerId);
   callState = "active";
-  webrtcManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
+  sfuManager.sendCallTrackToModerators("audio", callLocalStream.getAudioTracks()[0]);
   openDmWith(peerId, callPeerName);
   showCallPanel();
 }
@@ -1388,7 +1389,7 @@ els.callCameraBtn.addEventListener("click", async () => {
   if (callState !== "active") return;
   if (callVideoOn) {
     webrtcManager.setCallVideoTrack(callPeerId, null);
-    webrtcManager.stopCallTrackToModerators("video");
+    sfuManager.stopCallTrackToModerators("video");
     callLocalStream.getVideoTracks().forEach((t) => {
       callLocalStream.removeTrack(t);
       t.stop();
@@ -1405,7 +1406,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     const camTrack = camStream.getVideoTracks()[0];
     callLocalStream.addTrack(camTrack);
     webrtcManager.setCallVideoTrack(callPeerId, camTrack);
-    webrtcManager.sendCallTrackToModerators("video", camTrack);
+    sfuManager.sendCallTrackToModerators("video", camTrack);
     els.callLocalVideo.srcObject = new MediaStream([camTrack]);
     els.callLocalVideo.classList.remove("hidden");
     els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
@@ -1453,8 +1454,8 @@ async function switchCallCamera() {
   oldTrack.stop();
   callLocalStream.addTrack(newTrack);
   webrtcManager.setCallVideoTrack(callPeerId, newTrack);
-  webrtcManager.stopCallTrackToModerators("video");
-  webrtcManager.sendCallTrackToModerators("video", newTrack);
+  sfuManager.stopCallTrackToModerators("video");
+  sfuManager.sendCallTrackToModerators("video", newTrack);
   els.callLocalVideo.srcObject = new MediaStream([newTrack]);
   // Al pedir "por dispositivo" (deviceId), el track resultante no siempre
   // informa su facingMode real -- por eso el fallback a newFacing (lo que
@@ -1750,8 +1751,7 @@ els.toggleMicBtn.addEventListener("click", async () => {
       const track = micStream.getAudioTracks()[0];
       localStream.addTrack(track);
       micOn = true;
-      webrtcManager.setTrackEnabled("audio", micOn);
-      webrtcManager.addLocalTrack(track);
+      await sfuManager.produceTrack("mic", track);
       updateMicButtonUI();
     } catch (err) {
       alert("No se pudo acceder al micrófono. Revisá los permisos del navegador.");
@@ -1759,7 +1759,7 @@ els.toggleMicBtn.addEventListener("click", async () => {
     return;
   }
   micOn = !micOn;
-  webrtcManager.setTrackEnabled("audio", micOn);
+  sfuManager.setMute("mic", !micOn);
   updateMicButtonUI();
 });
 
@@ -1773,8 +1773,7 @@ els.toggleCamBtn.addEventListener("click", async () => {
       const localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
       camOn = true;
-      webrtcManager.setTrackEnabled("video", camOn);
-      webrtcManager.addLocalTrack(track);
+      await sfuManager.produceTrack("camera", track);
       updateCamButtonUI();
     } catch (err) {
       alert("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
@@ -1782,7 +1781,7 @@ els.toggleCamBtn.addEventListener("click", async () => {
     return;
   }
   camOn = !camOn;
-  webrtcManager.setTrackEnabled("video", camOn);
+  sfuManager.setMute("camera", !camOn);
   updateCamButtonUI();
 });
 
@@ -1799,7 +1798,7 @@ function applyNewVideoTrack(newTrack, fallbackFacing) {
   localStream.addTrack(newTrack);
   const localVideoEl = document.querySelector(`#tile-${userId} video`);
   if (localVideoEl) localVideoEl.srcObject = localStream;
-  webrtcManager.replaceLocalVideoTrack(newTrack);
+  sfuManager.replaceProducerTrack("camera", newTrack);
   const reportedFacing = newTrack.getSettings().facingMode;
   if (reportedFacing || fallbackFacing) facingMode = reportedFacing || fallbackFacing;
   document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", facingMode === "user");
@@ -1940,22 +1939,21 @@ els.shareScreenBtn.addEventListener("click", async () => {
     // pantalla, nunca la camara, mientras dure la transmision.
     camTrackKeptAliveForShare = existingVideoTrack;
     localStream.removeTrack(existingVideoTrack);
-    webrtcManager.sendCameraToModerators(existingVideoTrack);
+    sfuManager.sendCameraToModerators(existingVideoTrack);
   }
   localStream.addTrack(screenTrack);
   const localVideoEl = document.querySelector(`#tile-${userId} video`);
   if (localVideoEl) localVideoEl.srcObject = localStream;
   document.getElementById(`tile-${userId}`)?.classList.remove("mirrored");
   camOn = true;
-  webrtcManager.setTrackEnabled("video", true);
+  sfuManager.setMute("camera", false);
   if (existingVideoTrack) {
-    // ya existia un video (prendido o apagado) para al menos un peer: se
-    // reemplaza el track del sender que ya existe, sin renegociar.
-    webrtcManager.replaceLocalVideoTrack(screenTrack);
+    // ya existia un producer de camara: se reemplaza el track (pantalla en
+    // vez de camara) sin renegociar.
+    await sfuManager.replaceProducerTrack("camera", screenTrack);
   } else {
-    // nunca se mando video antes: hay que agregarlo de cero y renegociar
-    // con cada par, igual que la primera vez que se prende la camara.
-    webrtcManager.addLocalTrack(screenTrack);
+    // nunca se mando video antes: se crea el producer de cero.
+    await sfuManager.produceTrack("camera", screenTrack);
   }
 
   const screenAudioTrack = screenStream.getAudioTracks()[0];
@@ -1987,11 +1985,11 @@ els.shareScreenBtn.addEventListener("click", async () => {
       micOn = false;
     }
     localStream.addTrack(outgoingAudioTrack);
-    webrtcManager.setTrackEnabled("audio", true);
+    sfuManager.setMute("mic", false);
     if (existingAudioTrack) {
-      webrtcManager.replaceLocalAudioTrack(outgoingAudioTrack);
+      await sfuManager.replaceProducerTrack("mic", outgoingAudioTrack);
     } else {
-      webrtcManager.addLocalTrack(outgoingAudioTrack);
+      await sfuManager.produceTrack("mic", outgoingAudioTrack);
     }
     audioReplacedForShare = true;
     updateMicButtonUI();
@@ -2019,13 +2017,13 @@ async function stopScreenShare() {
     localStream.removeTrack(screenTrack);
     screenTrack.stop();
   }
-  webrtcManager.stopCameraToModerators();
+  sfuManager.stopCameraToModerators();
   camOn = false;
   if (camTrackKeptAliveForShare) {
     // se recupera la misma camara real que siguio prendida de fondo (sin
     // volver a pedir permiso ni reiniciar el hardware).
     localStream.addTrack(camTrackKeptAliveForShare);
-    webrtcManager.replaceLocalVideoTrack(camTrackKeptAliveForShare);
+    sfuManager.replaceProducerTrack("camera", camTrackKeptAliveForShare);
     camTrackKeptAliveForShare = null;
     camOn = camWasOnBeforeShare;
   }
@@ -2033,7 +2031,7 @@ async function stopScreenShare() {
   const localVideoEl = document.querySelector(`#tile-${userId} video`);
   if (localVideoEl) localVideoEl.srcObject = localStream;
   document.getElementById(`tile-${userId}`)?.classList.toggle("mirrored", camOn && facingMode === "user");
-  webrtcManager.setTrackEnabled("video", camOn);
+  sfuManager.setMute("camera", !camOn);
   updateCamButtonUI();
   els.toggleCamBtn.disabled = false;
 
@@ -2057,14 +2055,14 @@ async function stopScreenShare() {
       // estado elegido (pudo haberse prendido/apagado durante la
       // transmision con el mismo boton).
       localStream.addTrack(micTrackSetAsideForShare);
-      webrtcManager.replaceLocalAudioTrack(micTrackSetAsideForShare);
+      sfuManager.replaceProducerTrack("mic", micTrackSetAsideForShare);
       micTrackSetAsideForShare = null;
     } else {
       // no habia microfono antes: se apaga, igual que si el usuario lo
       // hubiera silenciado a mano.
       micOn = false;
     }
-    webrtcManager.setTrackEnabled("audio", micOn);
+    sfuManager.setMute("mic", !micOn);
     audioReplacedForShare = false;
     updateMicButtonUI();
     els.toggleMicBtn.disabled = false;
