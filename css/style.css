@@ -264,6 +264,17 @@ body {
   text-decoration-color: rgba(176, 38, 255, 0.5);
 }
 
+/* Solo la ve el moderador (el servidor ni siquiera la manda a los demas,
+   ver renderMemberList en app.js) -- sirve para identificar y banear a
+   mano a alguien con mal comportamiento. */
+.member-ip {
+  flex-shrink: 0;
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+
 .btn-kick {
   flex-shrink: 0;
   width: 22px;

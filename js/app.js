@@ -405,9 +405,14 @@ function renderMemberList() {
   for (const [id, info] of visible) {
     const li = document.createElement("li");
     li.className = "member-item";
+    // La IP solo llega del servidor si quien la ve es moderador (ver
+    // welcome/presence-joined en server.js) -- este chequeo de "isModerator"
+    // es nada mas para no mostrarla de mas en la propia interfaz, la
+    // proteccion real ya la hace el servidor no mandandola.
+    const ipHtml = isModerator && info.ip ? ` <span class="member-ip" title="IP de ${escapeHtml(info.name)}">${escapeHtml(info.ip)}</span>` : "";
     li.innerHTML = `<span class="status-dot"></span><span class="member-name">${escapeHtml(info.name)}${
       id === userId ? " <em>(tú)</em>" : ""
-    }</span>`;
+    }</span>${ipHtml}`;
     if (id !== userId) {
       const nameEl = li.querySelector(".member-name");
       nameEl.classList.add("clickable");
@@ -736,7 +741,7 @@ async function joinRoom() {
 
   isModerator = !!welcome.isModerator;
   for (const member of welcome.members) {
-    knownMembers.set(member.userId, { name: member.name, hidden: !!member.hidden });
+    knownMembers.set(member.userId, { name: member.name, hidden: !!member.hidden, ip: member.ip });
   }
   if (isModerator) ensureModAllTab();
 
@@ -813,7 +818,7 @@ async function joinRoom() {
   for (const entry of welcome.messages) renderMessage(entry);
 
   addRoomListener("presence-joined", (msg) => {
-    knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden });
+    knownMembers.set(msg.userId, { name: msg.name, hidden: !!msg.hidden, ip: msg.ip });
     webrtcManager.handlePeerJoined(msg.userId);
     renderMemberList();
     checkExtraModerators();
