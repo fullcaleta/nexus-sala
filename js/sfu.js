@@ -20,43 +20,80 @@ export function createSfuManager({ userId, onRemoteStream, onRemoveStream, onMod
   let device = null;
   let sendTransport = null;
   let recvTransport = null;
+  // Promesas "en vuelo" para evitar crear el Device/transport DOS VECES si
+  // dos llamadas concurrentes (ej: alguien entra con mic Y camara ya
+  // autorizados, dispara dos "sfu-new-producer" casi juntos) ven la
+  // variable todavia en null antes de que la primera termine de crearla --
+  // sin esto, la segunda podia terminar con su propio transport huerfano
+  // que nunca se conecta, y ese stream puntual quedaba sin aparecer nunca
+  // (el motivo del "a veces no aparece" en la ventana del moderador).
+  let devicePromise = null;
+  let sendTransportPromise = null;
+  let recvTransportPromise = null;
   const producers = new Map(); // role -> Producer
   const consumers = new Map(); // consumer.id -> { consumer, ownerUserId, role }
   const remoteStreams = new Map(); // ownerUserId -> MediaStream (roles normales: camera/mic)
 
-  async function ensureDevice() {
-    if (device) return device;
-    const { rtpCapabilities } = await sendSfuRequest("sfu-rtp-capabilities");
-    device = new Device();
-    await device.load({ routerRtpCapabilities: rtpCapabilities });
-    return device;
+  function ensureDevice() {
+    if (device) return Promise.resolve(device);
+    if (!devicePromise) {
+      devicePromise = (async () => {
+        const { rtpCapabilities } = await sendSfuRequest("sfu-rtp-capabilities");
+        const d = new Device();
+        await d.load({ routerRtpCapabilities: rtpCapabilities });
+        device = d;
+        return d;
+      })().catch((err) => {
+        devicePromise = null; // si fallo, la proxima llamada puede reintentar
+        throw err;
+      });
+    }
+    return devicePromise;
   }
 
-  async function ensureSendTransport() {
-    if (sendTransport) return sendTransport;
-    await ensureDevice();
-    const data = await sendSfuRequest("sfu-create-transport", { direction: "send" });
-    sendTransport = device.createSendTransport(data);
-    sendTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
-      sendSfuRequest("sfu-connect-transport", { transportId: sendTransport.id, dtlsParameters }).then(callback).catch(errback);
-    });
-    sendTransport.on("produce", ({ kind, rtpParameters, appData }, callback, errback) => {
-      sendSfuRequest("sfu-produce", { transportId: sendTransport.id, kind, rtpParameters, role: appData.role })
-        .then(({ producerId }) => callback({ id: producerId }))
-        .catch(errback);
-    });
-    return sendTransport;
+  function ensureSendTransport() {
+    if (sendTransport) return Promise.resolve(sendTransport);
+    if (!sendTransportPromise) {
+      sendTransportPromise = (async () => {
+        await ensureDevice();
+        const data = await sendSfuRequest("sfu-create-transport", { direction: "send" });
+        const t = device.createSendTransport(data);
+        t.on("connect", ({ dtlsParameters }, callback, errback) => {
+          sendSfuRequest("sfu-connect-transport", { transportId: t.id, dtlsParameters }).then(callback).catch(errback);
+        });
+        t.on("produce", ({ kind, rtpParameters, appData }, callback, errback) => {
+          sendSfuRequest("sfu-produce", { transportId: t.id, kind, rtpParameters, role: appData.role })
+            .then(({ producerId }) => callback({ id: producerId }))
+            .catch(errback);
+        });
+        sendTransport = t;
+        return t;
+      })().catch((err) => {
+        sendTransportPromise = null;
+        throw err;
+      });
+    }
+    return sendTransportPromise;
   }
 
-  async function ensureRecvTransport() {
-    if (recvTransport) return recvTransport;
-    await ensureDevice();
-    const data = await sendSfuRequest("sfu-create-transport", { direction: "recv" });
-    recvTransport = device.createRecvTransport(data);
-    recvTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
-      sendSfuRequest("sfu-connect-transport", { transportId: recvTransport.id, dtlsParameters }).then(callback).catch(errback);
-    });
-    return recvTransport;
+  function ensureRecvTransport() {
+    if (recvTransport) return Promise.resolve(recvTransport);
+    if (!recvTransportPromise) {
+      recvTransportPromise = (async () => {
+        await ensureDevice();
+        const data = await sendSfuRequest("sfu-create-transport", { direction: "recv" });
+        const t = device.createRecvTransport(data);
+        t.on("connect", ({ dtlsParameters }, callback, errback) => {
+          sendSfuRequest("sfu-connect-transport", { transportId: t.id, dtlsParameters }).then(callback).catch(errback);
+        });
+        recvTransport = t;
+        return t;
+      })().catch((err) => {
+        recvTransportPromise = null;
+        throw err;
+      });
+    }
+    return recvTransportPromise;
   }
 
   // "role" identifica QUE es el track para el servidor (ver ROLES en
