@@ -1233,6 +1233,12 @@ body {
 
 .call-panel.call-panel-maximized .call-video-main {
   height: 100%;
+  /* "cover" (el normal, para el recuadro chico) recorta el video para
+     llenar el espacio -- en la vista grande eso corta partes de lo que la
+     otra persona esta mostrando. "contain" muestra el cuadro completo,
+     con franjas negras si la proporcion no calza exacto. */
+  object-fit: contain;
+  background: #000;
 }
 
 /* Mismo boton/color que el de cambiar camara sobre la propia vista previa
