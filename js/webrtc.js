@@ -7,10 +7,11 @@ import { sendSignal, on as onRealtime } from "./realtime.js?v=6";
 // conexion directa, asi que esta parte se queda igual que siempre.
 const FALLBACK_ICE_SERVERS = { iceServers: [{ urls: "stun:nexus-sala.duckdns.org:33478" }] };
 
-export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS, onCallTrack, onCallEnded }) {
+export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS, onCallTrack, onCallEnded, onAudioSilentRequest }) {
   // --- Llamada privada 1 a 1 ---
   const callPeerConnections = new Map(); // peerId -> RTCPeerConnection
   const callVideoSenders = new Map(); // peerId -> RTCRtpSender (transceiver de video, ver getOrCreateCallPeerConnection)
+  const callAudioSenders = new Map(); // peerId -> RTCRtpSender (mic, ver getOrCreateCallPeerConnection y setCallAudioTrack)
   const callMakingOffer = new Map();
   const callIgnoreOffer = new Map();
   const callNegotiationChain = new Map();
@@ -77,7 +78,7 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     callMakingOffer.set(peerId, false);
 
     const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) pc.addTrack(audioTrack, stream);
+    if (audioTrack) callAudioSenders.set(peerId, pc.addTrack(audioTrack, stream));
     const videoTransceiver = pc.addTransceiver("video", { direction: "sendrecv" });
     callVideoSenders.set(peerId, videoTransceiver.sender);
 
@@ -137,6 +138,26 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     scheduleCallNegotiation(peerId);
   }
 
+  // Reemplaza el microfono que se manda a esta llamada por uno nuevo, sin
+  // renegociar (mismo transceiver de audio ya declarado desde el arranque).
+  // Se usa cuando el OTRO lado avisa que no le esta llegando audio de
+  // verdad (ver "call-audio-silent" mas abajo): un problema conocido de
+  // Safari/iOS viejo donde el track queda "vivo" a nivel de WebRTC (dispara
+  // "unmute", ICE conectado) pero lo que manda es silencio -- un track
+  // nuevo (pedido de cero con getUserMedia) suele arrancar bien.
+  function setCallAudioTrack(peerId, track) {
+    const sender = callAudioSenders.get(peerId);
+    if (!sender) return;
+    sender.replaceTrack(track).catch((err) => console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err));
+  }
+
+  // Le avisa al otro lado de la llamada que no le esta llegando audio real
+  // (ver monitorCallAudioLevel en app.js), para que intente refrescar su
+  // propio microfono con setCallAudioTrack.
+  function notifyAudioSilent(peerId) {
+    sendSignal(peerId, "call-audio-silent", {});
+  }
+
   function endCall(peerId) {
     const pc = callPeerConnections.get(peerId);
     if (pc) {
@@ -144,6 +165,7 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
       callPeerConnections.delete(peerId);
     }
     callVideoSenders.delete(peerId);
+    callAudioSenders.delete(peerId);
     callMakingOffer.delete(peerId);
     callIgnoreOffer.delete(peerId);
     callNegotiationChain.delete(peerId);
@@ -185,11 +207,13 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
       } catch (err) {
         if (!callIgnoreOffer.get(from)) console.warn("No se pudo agregar ICE candidate de la llamada", err);
       }
+    } else if (signalType === "call-audio-silent") {
+      onAudioSilentRequest?.(from);
     }
   }
 
   const unsubscribeCallSignal = onRealtime("signal", (msg) => {
-    if (msg.signalType === "call-description" || msg.signalType === "call-candidate") {
+    if (["call-description", "call-candidate", "call-audio-silent"].includes(msg.signalType)) {
       handleCallSignal(msg);
     }
   });
@@ -205,6 +229,8 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     startCallOffer,
     prepareCallReceiver,
     setCallVideoTrack,
+    setCallAudioTrack,
+    notifyAudioSilent,
     endCall,
     destroy,
   };
