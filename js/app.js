@@ -1147,27 +1147,46 @@ function stopCallLocalStream() {
   }
 }
 
-// Algunos Safari viejos (iPhone 7 confirmado) dejan la sesion de audio del
-// microfono en un estado roto despues de una llamada privada: el track del
-// microfono de la sala general sigue "vivo" para el JS (nunca se vuelve a
-// pedir al prender/apagar, solo se pausa/reanuda del lado del servidor -- ver
-// toggleMicBtn mas abajo), pero deja de mandar audio real, y hasta ahora la
-// unica forma de arreglarlo era recargar la pagina entera. Pedir el
-// microfono de nuevo ahora mismo, con un track nuevo, logra lo mismo sin
-// recargar: si el mic de la sala no estaba prendido no hay nada que hacer.
-async function refreshRoomMicTrackAfterCall() {
-  const oldTrack = localStream.getAudioTracks()[0];
-  if (!oldTrack) return;
-  try {
-    await new Promise((r) => setTimeout(r, 300)); // le da tiempo a iOS a soltar la sesion de audio de la llamada
-    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const newTrack = micStream.getAudioTracks()[0];
-    localStream.removeTrack(oldTrack);
-    oldTrack.stop();
-    localStream.addTrack(newTrack);
-    await sfuManager.replaceProducerTrack("mic", newTrack);
-  } catch (err) {
-    console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la sala despues de la llamada:", err);
+// Algunos Safari viejos (iPhone 7 confirmado) dejan la sesion de audio/camara
+// en un estado roto despues de una llamada privada: el mic y/o la camara de
+// la sala general siguen "vivos" para el JS (nunca se vuelven a pedir al
+// prender/apagar, solo se pausan/reanudan del lado del servidor -- ver
+// toggleMicBtn/toggleCamBtn mas abajo), pero dejan de mandar audio/video
+// real, y hasta ahora la unica forma de arreglarlo era recargar la pagina
+// entera. Pedir el mic/camara de nuevo ahora mismo, con un track nuevo, logra
+// lo mismo sin recargar. Si no hay nada prendido, o se esta compartiendo
+// pantalla (localStream ya no tiene el mic/camara "de verdad" ahi, ver
+// shareScreenBtn), no hay nada que hacer.
+async function refreshRoomTracksAfterCall() {
+  if (screenShareActive) return;
+  const hadMic = !!localStream.getAudioTracks()[0];
+  const hadCam = !!localStream.getVideoTracks()[0];
+  if (!hadMic && !hadCam) return;
+  await new Promise((r) => setTimeout(r, 300)); // le da tiempo a iOS a soltar la sesion de la llamada
+
+  if (hadMic) {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const newTrack = micStream.getAudioTracks()[0];
+      const oldTrack = localStream.getAudioTracks()[0];
+      if (oldTrack) {
+        localStream.removeTrack(oldTrack);
+        oldTrack.stop();
+      }
+      localStream.addTrack(newTrack);
+      await sfuManager.replaceProducerTrack("mic", newTrack);
+    } catch (err) {
+      console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la sala despues de la llamada:", err);
+    }
+  }
+
+  if (hadCam) {
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
+      applyNewVideoTrack(camStream.getVideoTracks()[0], facingMode);
+    } catch (err) {
+      console.warn("[NEXUS-CALL] no se pudo refrescar la camara de la sala despues de la llamada:", err);
+    }
   }
 }
 
@@ -1206,7 +1225,7 @@ function resetCallState() {
   } catch (err) {
     console.warn("[NEXUS-CALL] error deteniendo el microfono de la llamada:", err);
   }
-  refreshRoomMicTrackAfterCall();
+  refreshRoomTracksAfterCall();
   callState = "idle";
   callPeerId = null;
   callPeerName = "";
