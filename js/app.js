@@ -987,10 +987,12 @@ async function joinRoom() {
       callRingTimeout = null;
     }
     els.callOutgoingOverlay.classList.add("hidden");
-    // El microfono ya se pidio en startOutgoingCall (dentro del clic que
-    // inicio la llamada) -- aca solo se usa. Si por lo que sea no esta
-    // (no deberia pasar), se corta en vez de arriesgarse a pedirlo de
-    // nuevo fuera de un gesto directo del usuario.
+    // El microfono ya se pidio Y se mando en startOutgoingCall (dentro del
+    // clic que inicio la llamada) -- aca solo queda activar la interfaz y
+    // reproducir lo que haya llegado mientras tanto (ver
+    // flushPendingCallTracks). Si por lo que sea no esta el microfono (no
+    // deberia pasar), se corta en vez de arriesgarse a pedirlo de nuevo
+    // fuera de un gesto directo del usuario.
     if (!callLocalStream) {
       sendCallHangup(callPeerId);
       resetCallState();
@@ -998,7 +1000,7 @@ async function joinRoom() {
       return;
     }
     callState = "active";
-    sfuManager.sendCallAudio(callPeerId, callLocalStream.getAudioTracks()[0]);
+    flushPendingCallTracks();
     showCallPanel();
   });
 
@@ -1353,6 +1355,7 @@ function resetCallState() {
   callVideoOn = false;
   els.callSwitchCamBtn.classList.add("hidden");
   callRemoteTracks.clear();
+  pendingCallTracks.length = 0;
   if (callGainNode) {
     try {
       callGainNode.disconnect();
@@ -1411,6 +1414,18 @@ async function startOutgoingCall() {
     getSharedAudioContext();
     measureLocalMicLevel(callLocalStream, "llamando");
     ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
+    // El ENVIO real (sfuManager.sendCallAudio, que crea el RTCRtpSender de
+    // verdad) tambien va ACA, dentro del propio clic -- antes se mandaba
+    // recien al llegar "call-accept" (un mensaje de red, no un gesto). Ya
+    // se habia corregido la CAPTURA para que pasara en el clic, pero el
+    // envio en si seguia disparandose fuera de gesto -- exactamente el
+    // mismo tipo de problema que causo casi todos los bugs de audio de
+    // esta noche. El otro lado no puede escuchar esto todavia (no empieza
+    // a reproducirlo hasta que la llamada este realmente activa, ver
+    // handleCallTrack/flushPendingCallTracks), asi que no hay riesgo de que
+    // se escuchen antes de tiempo -- solo se adelanta el momento en que el
+    // navegador arma la conexion de envio.
+    sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
   } catch (err) {
     alert("No se pudo acceder al micrófono para hacer la llamada.");
     return;
@@ -1458,6 +1473,7 @@ async function acceptIncomingCall() {
   sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
   sendCallAccept(peerId);
   callState = "active";
+  flushPendingCallTracks();
   openDmWith(peerId, callPeerName);
   showCallPanel();
 }
@@ -1468,8 +1484,23 @@ function hangupActiveCall() {
   resetCallState();
 }
 
+// El envio del que llama ahora arranca dentro del propio clic (ver
+// startOutgoingCall), antes de que el otro lado acepte -- asi que su track
+// puede llegar ACA mientras el destinatario todavia esta en "ringing", no
+// "active" todavia. No se conecta antes de tiempo (nadie deberia escuchar
+// nada hasta aceptar de verdad): se guarda y se conecta recien cuando la
+// llamada pasa a activa (ver flushPendingCallTracks).
+const pendingCallTracks = [];
 function handleCallTrack(peerId, track) {
-  if (peerId !== callPeerId || callState !== "active") return;
+  if (peerId !== callPeerId) return;
+  if (callState !== "active") {
+    pendingCallTracks.push(track);
+    return;
+  }
+  connectIncomingCallTrack(track);
+}
+
+function connectIncomingCallTrack(track) {
   if (track.kind === "audio") {
     connectCallAudio(track);
     return;
@@ -1482,6 +1513,11 @@ function handleCallTrack(peerId, track) {
   els.callRemoteVideo.play().catch(() => {});
   track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
   track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
+}
+
+function flushPendingCallTracks() {
+  const tracks = pendingCallTracks.splice(0, pendingCallTracks.length);
+  for (const track of tracks) connectIncomingCallTrack(track);
 }
 
 // Mismo truco que ya usa el resto de la app para el audio de la sala (ver
