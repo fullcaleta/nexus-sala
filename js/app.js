@@ -992,7 +992,6 @@ async function joinRoom() {
     }
     callState = "active";
     webrtcManager.startCallOffer(callPeerId, callLocalStream);
-    scheduleProactiveAudioRefresh(callPeerId);
     // Clon de verdad (no la misma referencia): "enabled" es una propiedad
     // POR TRACK, asi que si se mandara el mismo track de arriba, mutear la
     // llamada (mas abajo, con track.enabled = false) tambien apagaba esta
@@ -1371,7 +1370,6 @@ async function acceptIncomingCall() {
   webrtcManager.prepareCallReceiver(peerId, callLocalStream);
   sendCallAccept(peerId);
   callState = "active";
-  scheduleProactiveAudioRefresh(peerId);
   // Ver el mismo comentario en startOutgoingCall: tiene que ser un clon de
   // verdad, no la misma referencia, para que mutear la llamada no apague
   // tambien lo que recibe el moderador.
@@ -1481,9 +1479,15 @@ function monitorCallAudioLevel(ctx, source, peerId) {
 // webrtc.js), en vez de pedirle a la persona que cuelgue y vuelva a llamar.
 // No se toca la copia que recibe el moderador (ver callAudioCloneForMod):
 // si el otro lado la sigue escuchando bien, el problema es solo del lado
-// de esta conexion directa. Tambien se usa de forma PROACTIVA (ver
-// scheduleProactiveAudioRefresh mas abajo), no solo cuando el otro lado
-// avisa.
+// de esta conexion directa.
+//
+// Se probo tambien dispararlo PROACTIVAMENTE (sin esperar el aviso) a los
+// pocos segundos de conectar, para no tener que esperar los 10s del
+// diagnostico -- pero como los dos lados de la llamada lo disparaban casi
+// al mismo tiempo, terminaba en dos renegociaciones chocando entre si
+// ("glare") y dejaba la llamada peor que antes (los dos lados mudos, en vez
+// de solo uno). Se saco esa parte: por ahora solo se dispara cuando el otro
+// lado efectivamente avisa, nunca los dos a la vez sin necesidad.
 async function handleAudioSilentRequest(peerId) {
   if (peerId !== callPeerId || callState !== "active" || !callLocalStream) return;
   const oldTrack = callLocalStream.getAudioTracks()[0];
@@ -1501,19 +1505,6 @@ async function handleAudioSilentRequest(peerId) {
   } catch (err) {
     console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err);
   }
-}
-
-// Ademas de esperar a que el otro lado avise que no escucha nada (ver
-// monitorCallAudioLevel: tarda 10s en confirmarlo, para no confundir un
-// silencio real con que la persona todavia no dijo nada), se intenta un
-// refresco temprano del propio microfono a los pocos segundos de conectar
-// -- mismo arreglo de arriba, pero antes de que a nadie le de tiempo a
-// notar el silencio. Si el dispositivo nunca tuvo el problema, este
-// refresco de mas es inofensivo.
-function scheduleProactiveAudioRefresh(peerId) {
-  setTimeout(() => {
-    if (callState === "active" && callPeerId === peerId) handleAudioSilentRequest(peerId);
-  }, 2000);
 }
 
 function handleCallEnded(peerId) {
