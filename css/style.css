@@ -374,6 +374,13 @@ body {
   object-fit: cover;
   display: block;
   background: #0d0c16;
+  /* Sin esto, un video de WebRTC (MediaStream) puede quedar "pegado" en
+     negro cuando el layout cambia de tamano de golpe (ej: abrir/cerrar las
+     herramientas de desarrollador, o cualquier reflow del grid) -- el
+     video sigue recibiendo datos reales, el navegador simplemente no
+     repinta el cuadro. Forzar una capa propia de composicion (GPU) evita
+     que dependa del repintado normal del layout. */
+  transform: translateZ(0);
 }
 
 /* "Agrandar" no pide pantalla completa real al sistema operativo (ver
