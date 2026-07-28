@@ -1102,6 +1102,16 @@ els.joinForm.addEventListener("submit", async (e) => {
     callRingtonePlayer = new Audio();
     callRingtonePlayer.loop = true;
     unlockAudioSilently(callRingtonePlayer, "sounds/llamada.mp3", 0.7);
+    // Traba de seguridad: confirmado con un caso real que, en Android, una
+    // llamada telefonica REAL de golpe puede hacer que el navegador retome
+    // solo este audio (ya cargado, listo para sonar) al terminar esa
+    // llamada, sin que nadie haya llamado dentro de la app -- un capricho
+    // del sistema al devolver el foco de audio, no algo que se dispare
+    // desde este codigo. Si arranca a sonar sin que haya una llamada
+    // sonando de verdad, se corta al toque.
+    callRingtonePlayer.addEventListener("play", () => {
+      if (callState !== "ringing") callRingtonePlayer.pause();
+    });
   } catch (err) {
     console.warn("No se pudo preparar el audio de avisos:", err);
   }
