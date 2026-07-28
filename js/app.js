@@ -732,16 +732,27 @@ async function autoAcquireIfAlreadyGranted() {
     }
   }
   if (await permissionAlreadyGranted("camera")) {
+    let track = null;
+    let localVideoEl = null;
     try {
       const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-      const track = camStream.getVideoTracks()[0];
+      track = camStream.getVideoTracks()[0];
       localStream.addTrack(track);
-      const localVideoEl = document.querySelector(`#tile-${userId} video`);
+      localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
       await sfuManager.produceTrack("camera", track);
       sfuManager.setMute("camera", !camOn);
     } catch (err) {
-      // permiso revocado justo ahora u otro problema: se pedira con el boton
+      // permiso revocado justo ahora, se llego al limite de camaras
+      // simultaneas (ver MAX_CAMERAS en server/sfu.js), u otro problema: se
+      // deshace la captura local si ya se habia agregado, para no dejar una
+      // vista previa que en realidad no le llega a nadie. Se pedira con el
+      // boton si el usuario lo intenta a mano.
+      if (track) {
+        localStream.removeTrack(track);
+        track.stop();
+        if (localVideoEl) localVideoEl.srcObject = localStream;
+      }
     }
   }
   updateCamButtonUI();
@@ -1902,17 +1913,31 @@ els.toggleMicBtn.addEventListener("click", async () => {
 els.toggleCamBtn.addEventListener("click", async () => {
   const existingTrack = localStream.getVideoTracks()[0];
   if (!existingTrack) {
+    let camStream;
     try {
-      const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-      const track = camStream.getVideoTracks()[0];
-      localStream.addTrack(track);
-      const localVideoEl = document.querySelector(`#tile-${userId} video`);
-      if (localVideoEl) localVideoEl.srcObject = localStream;
-      camOn = true;
-      await sfuManager.produceTrack("camera", track);
-      updateCamButtonUI();
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
     } catch (err) {
       alert("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
+      return;
+    }
+    const track = camStream.getVideoTracks()[0];
+    localStream.addTrack(track);
+    const localVideoEl = document.querySelector(`#tile-${userId} video`);
+    if (localVideoEl) localVideoEl.srcObject = localStream;
+    try {
+      await sfuManager.produceTrack("camera", track);
+      camOn = true;
+      updateCamButtonUI();
+    } catch (err) {
+      // El servidor rechazo el pedido (ej: se llego al limite de camaras
+      // simultaneas, ver MAX_CAMERAS en server/sfu.js) -- se deshace la
+      // captura local para no dejar la camara prendida sin que nadie la
+      // vea, y se muestra el motivo real en vez de un mensaje generico de
+      // permisos.
+      localStream.removeTrack(track);
+      track.stop();
+      if (localVideoEl) localVideoEl.srcObject = localStream;
+      alert(err.message || "No se pudo activar la cámara.");
     }
     return;
   }
