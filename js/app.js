@@ -18,7 +18,7 @@ import {
   fetchTurnCredentials,
 } from "./realtime.js?v=9";
 import { createWebRTCManager } from "./webrtc.js?v=19";
-import { createSfuManager } from "./sfu.js?v=9";
+import { createSfuManager } from "./sfu.js?v=10";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
@@ -747,8 +747,7 @@ async function autoAcquireIfAlreadyGranted() {
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const track = micStream.getAudioTracks()[0];
       localStream.addTrack(track);
-      await sfuManager.produceTrack("mic", track);
-      sfuManager.setMute("mic", !micOn);
+      await sfuManager.produceTrack("mic", track, undefined, !micOn);
     } catch (err) {
       // permiso revocado justo ahora u otro problema: se pedira con el boton
     }
@@ -762,8 +761,7 @@ async function autoAcquireIfAlreadyGranted() {
       localStream.addTrack(track);
       localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
-      await sfuManager.produceTrack("camera", track);
-      sfuManager.setMute("camera", !camOn);
+      await sfuManager.produceTrack("camera", track, undefined, !camOn);
     } catch (err) {
       // permiso revocado justo ahora, se llego al limite de camaras
       // simultaneas (ver MAX_CAMERAS en server/sfu.js), u otro problema: se

@@ -90,6 +90,7 @@ export function createSfuManager({
             rtpParameters,
             role: appData.role,
             targetUserId: appData.targetUserId,
+            initialMuted: appData.initialMuted,
           })
             .then(({ producerId }) => callback({ id: producerId }))
             .catch(errback);
@@ -128,9 +129,9 @@ export function createSfuManager({
   // server/sfu.js) -- nunca se manda un permiso, solo una etiqueta fija.
   // targetUserId solo tiene sentido para callAudio/callVideo (ver
   // sendCallAudio/sendCallVideo mas abajo).
-  async function produceTrack(role, track, targetUserId) {
+  async function produceTrack(role, track, targetUserId, initialMuted = false) {
     await ensureSendTransport();
-    const producer = await sendTransport.produce({ track, appData: { role, targetUserId } });
+    const producer = await sendTransport.produce({ track, appData: { role, targetUserId, initialMuted } });
     producers.set(role, producer);
     return producer;
   }
