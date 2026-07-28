@@ -1761,6 +1761,18 @@ els.callFullscreenBtn.addEventListener("click", () => {
     els.callPanel.style.left = "";
     els.callPanel.style.top = "";
     els.callPanel.style.right = "";
+    // width/height puestos a mano con lo que JS mide de verdad (no con
+    // 100%/100vw en CSS): confirmado con un caso real en el iPhone 7 que,
+    // incluso sin el problema del arrastre, quedaba una tira visible a la
+    // derecha -- Safari viejo puede calcular mal el ancho real del
+    // viewport contra unidades CSS cuando el resto de la pagina tiene
+    // contenido mas ancho de lo visible (la sala, con sidebar+chat). Medir
+    // con window.innerWidth/innerHeight no depende de nada de eso.
+    els.callPanel.style.width = `${window.innerWidth}px`;
+    els.callPanel.style.height = `${window.innerHeight}px`;
+  } else {
+    els.callPanel.style.width = "";
+    els.callPanel.style.height = "";
   }
   els.callPanel.classList.toggle("call-panel-maximized");
 });
@@ -1806,6 +1818,8 @@ function resetCallPanelPosition() {
   els.callPanel.style.left = "";
   els.callPanel.style.top = "";
   els.callPanel.style.right = "";
+  els.callPanel.style.width = "";
+  els.callPanel.style.height = "";
   els.callPanel.classList.remove("call-panel-maximized");
 }
 
