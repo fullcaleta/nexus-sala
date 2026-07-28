@@ -212,7 +212,7 @@ export function createSfuManager({
 
     if (MOD_ONLY_ROLES.has(role)) {
       if (isMyCall) onCallStream?.(ownerUserId, consumer.track);
-      else onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track);
+      else onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track, role);
       return;
     }
     let stream = remoteStreams.get(ownerUserId);
