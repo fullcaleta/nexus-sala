@@ -970,12 +970,14 @@ async function joinRoom() {
       callRingTimeout = null;
     }
     els.callOutgoingOverlay.classList.add("hidden");
-    try {
-      callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
+    // El microfono ya se pidio en startOutgoingCall (dentro del clic que
+    // inicio la llamada) -- aca solo se usa. Si por lo que sea no esta
+    // (no deberia pasar), se corta en vez de arriesgarse a pedirlo de
+    // nuevo fuera de un gesto directo del usuario.
+    if (!callLocalStream) {
       sendCallHangup(callPeerId);
       resetCallState();
-      alert("No se pudo acceder al micrófono para iniciar la llamada.");
+      alert("Se perdió el acceso al micrófono. Intentá llamar de nuevo.");
       return;
     }
     callState = "active";
@@ -1291,14 +1293,28 @@ function showCallPanel() {
   els.callCameraBtn.classList.remove("active");
 }
 
-function startOutgoingCall() {
+async function startOutgoingCall() {
   if (activeThread === "general" || activeThread === "mod-all") return;
   if (callState !== "idle") return; // ya en otra llamada o esperando respuesta
   if (!navigator.mediaDevices?.getUserMedia) {
     alert("Este navegador no permite hacer llamadas acá.");
     return;
   }
-  callPeerId = activeThread;
+  const peerId = activeThread;
+  // El microfono se pide ACA, en el momento mismo del clic -- no despues de
+  // que el otro lado acepte (eso llega por un mensaje de red, no por un
+  // gesto directo del usuario). Algunos navegadores estrictos (Safari/iOS
+  // viejo entre ellos) tratan un getUserMedia disparado fuera de un gesto
+  // directo de forma distinta: no lo rechazan, pero el audio puede terminar
+  // en un estado raro (conectado, pero sin mandar sonido de verdad). Pedirlo
+  // ya mismo, dentro del propio clic, evita ese riesgo de raiz.
+  try {
+    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    alert("No se pudo acceder al micrófono para hacer la llamada.");
+    return;
+  }
+  callPeerId = peerId;
   callPeerName = knownMembers.get(callPeerId)?.name || "Usuario";
   callState = "calling";
   els.callOutgoingName.textContent = callPeerName;
