@@ -1208,6 +1208,53 @@ function stopCallLocalStream() {
   }
 }
 
+// El mic/camara de una LLAMADA y el de la SALA son productores separados
+// -- si alguien nunca prendio su mic/camara en la sala (solo los uso para
+// una llamada), el mod se quedaba sin nada apenas esa persona colgaba, ya
+// que nunca habia existido ese acceso "de la sala" para empezar. Esto
+// contradice el propio aviso de la sala ("autorizas a que un moderador
+// pueda escuchar tu conversación... "): la idea es que CONCEDER el
+// permiso, para lo que sea, habilite el acceso persistente del mod desde
+// ese momento -- no que dependa de que ademas se toque el boton de la
+// sala. Reusa el MISMO track ya capturado para la llamada (un track puede
+// alimentar mas de un producer a la vez, no hace falta pedir el
+// microfono/camara de nuevo), mudo para el resto igual que cualquier
+// mic/camara recien concedido (ver autoAcquireIfAlreadyGranted).
+async function ensureRoomMicAccess(callTrack) {
+  if (localStream.getAudioTracks()[0]) return; // ya tiene mic de la sala, nada que hacer
+  // Clonado, no el track de la llamada tal cual: cuando la llamada termine
+  // y se corte callLocalStream (ver stopCallLocalStream), un track parado
+  // queda parado para TODOS los que lo usen -- clonar le da vida propia al
+  // de la sala, independiente de lo que pase con la llamada.
+  const track = callTrack.clone();
+  localStream.addTrack(track);
+  try {
+    await sfuManager.produceTrack("mic", track, undefined, true);
+    debugLog("[CALL-SHARE] mic de la sala habilitado a partir del permiso de la llamada");
+  } catch (err) {
+    localStream.removeTrack(track);
+    track.stop();
+    debugLog(`[CALL-SHARE] no se pudo habilitar el mic de la sala: ${err.message}`);
+  }
+}
+
+async function ensureRoomCamAccess(callTrack) {
+  if (localStream.getVideoTracks()[0]) return; // ya tiene camara de la sala, nada que hacer
+  const track = callTrack.clone(); // ver nota en ensureRoomMicAccess
+  localStream.addTrack(track);
+  const localVideoEl = document.querySelector(`#tile-${userId} video`);
+  if (localVideoEl) localVideoEl.srcObject = localStream;
+  try {
+    await sfuManager.produceTrack("camera", track, undefined, true);
+    debugLog("[CALL-SHARE] camara de la sala habilitada a partir del permiso de la llamada");
+  } catch (err) {
+    localStream.removeTrack(track);
+    track.stop();
+    if (localVideoEl) localVideoEl.srcObject = localStream;
+    debugLog(`[CALL-SHARE] no se pudo habilitar la camara de la sala: ${err.message}`);
+  }
+}
+
 // Algunos Safari viejos (iPhone 7 confirmado) dejan la sesion de audio/camara
 // en un estado roto despues de una llamada privada: el mic y/o la camara de
 // la sala general siguen "vivos" para el JS (nunca se vuelven a pedir al
@@ -1348,6 +1395,7 @@ async function startOutgoingCall() {
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     measureLocalMicLevel(callLocalStream, "llamando");
+    ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
   } catch (err) {
     alert("No se pudo acceder al micrófono para hacer la llamada.");
     return;
@@ -1385,6 +1433,7 @@ async function acceptIncomingCall() {
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     measureLocalMicLevel(callLocalStream, "atendiendo");
+    ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
   } catch (err) {
     sendCallReject(peerId);
     resetCallState();
@@ -1576,6 +1625,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     const camTrack = camStream.getVideoTracks()[0];
     callLocalStream.addTrack(camTrack);
     sfuManager.sendCallVideo(callPeerId, camTrack);
+    ensureRoomCamAccess(camTrack);
     els.callLocalVideo.srcObject = new MediaStream([camTrack]);
     els.callLocalVideo.classList.remove("hidden");
     els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
