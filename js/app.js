@@ -1226,8 +1226,9 @@ async function refreshRoomTracksAfterCall() {
       }
       localStream.addTrack(newTrack);
       await sfuManager.replaceProducerTrack("mic", newTrack);
+      debugLog("[REFRESH] microfono de la sala refrescado ok despues de la llamada");
     } catch (err) {
-      console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la sala despues de la llamada:", err);
+      debugLog(`[REFRESH] fallo al refrescar el microfono de la sala despues de la llamada: ${err.message}`);
     }
   }
 
@@ -1235,8 +1236,9 @@ async function refreshRoomTracksAfterCall() {
     try {
       const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
       applyNewVideoTrack(camStream.getVideoTracks()[0], facingMode);
+      debugLog("[REFRESH] camara de la sala refrescada ok despues de la llamada");
     } catch (err) {
-      console.warn("[NEXUS-CALL] no se pudo refrescar la camara de la sala despues de la llamada:", err);
+      debugLog(`[REFRESH] fallo al refrescar la camara de la sala despues de la llamada: ${err.message}`);
     }
   }
 }
