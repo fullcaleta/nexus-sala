@@ -983,7 +983,7 @@ async function joinRoom() {
     }
     els.callOutgoingOverlay.classList.add("hidden");
     try {
-      callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      callLocalStream = await getCallMicStream();
     } catch (err) {
       sendCallHangup(callPeerId);
       resetCallState();
@@ -1191,6 +1191,28 @@ function stopCallLocalStream() {
   }
 }
 
+// En algunos Safari viejos (iPhone 7 confirmado) la PRIMERA captura de
+// microfono de toda la pestaña puede quedar "viva" a nivel de WebRTC
+// (conectada, dispara "unmute") pero mandando silencio real -- confirmado
+// con mediciones reales de volumen, primero sobre una conexion directa y
+// despues sobre el SFU, asi que no es un problema de la conexion en si.
+// Se confirmo en vivo que activar el microfono de la sala (una SEGUNDA
+// captura) destraba el audio de la llamada -- se aprovecha ese mismo
+// efecto pidiendo una captura descartable de entrada (se corta al toque)
+// antes de la real, solo si todavia no habia ninguna captura de audio en
+// esta pestaña.
+async function getCallMicStream() {
+  if (!localStream.getAudioTracks().length) {
+    try {
+      const warmup = await navigator.mediaDevices.getUserMedia({ audio: true });
+      warmup.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      // si esto falla, se sigue igual con el intento real de abajo
+    }
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: true });
+}
+
 // Algunos Safari viejos (iPhone 7 confirmado) dejan la sesion de audio/camara
 // en un estado roto despues de una llamada privada: el mic y/o la camara de
 // la sala general siguen "vivos" para el JS (nunca se vuelven a pedir al
@@ -1342,7 +1364,7 @@ async function acceptIncomingCall() {
   els.callIncomingOverlay.classList.add("hidden");
   stopCallRingtone();
   try {
-    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    callLocalStream = await getCallMicStream();
   } catch (err) {
     sendCallReject(peerId);
     resetCallState();
