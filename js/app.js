@@ -1412,7 +1412,13 @@ async function startOutgoingCall() {
     // Safari/iOS viejo.
     getSharedAudioContext();
     measureLocalMicLevel(callLocalStream, "llamando");
-    ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
+    // DESACTIVADO por ahora: crear a la vez un segundo producer (mic de la
+    // sala, clonado del mismo microfono fisico) parece ser la causa de que
+    // el audio de la llamada llegue vacio (packets perfectos, energia 0)
+    // -- confirmado que la ultima vez que la llamada funciono de verdad fue
+    // ANTES de agregar esto. Se prioriza recuperar el audio basico de la
+    // llamada; la persistencia del mod despues de colgar queda pendiente.
+    // ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
   } catch (err) {
     alert("No se pudo acceder al micrófono para hacer la llamada.");
     return;
@@ -1450,7 +1456,7 @@ async function acceptIncomingCall() {
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_CONSTRAINTS });
     measureLocalMicLevel(callLocalStream, "atendiendo");
-    ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
+    // ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]); -- ver nota en startOutgoingCall
   } catch (err) {
     sendCallReject(peerId);
     resetCallState();
@@ -1673,7 +1679,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     const camTrack = camStream.getVideoTracks()[0];
     callLocalStream.addTrack(camTrack);
     sfuManager.sendCallVideo(callPeerId, camTrack);
-    ensureRoomCamAccess(camTrack);
+    // ensureRoomCamAccess(camTrack); -- ver nota en startOutgoingCall (mismo motivo: dos producers del mismo dispositivo a la vez)
     els.callLocalVideo.srcObject = new MediaStream([camTrack]);
     els.callLocalVideo.classList.remove("hidden");
     els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
