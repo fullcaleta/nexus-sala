@@ -147,10 +147,14 @@ export async function connect(userId, name, modKey, onRetry) {
       // Reintentar con el mismo nombre no sirve de nada: el servidor lo va
       // a rechazar de nuevo, siempre por el mismo motivo.
       if (err.code === "name-taken") throw err;
+      // motivo/url de este intento fallido, para poder ver en pantalla (ver
+      // onRetry en app.js) exactamente que paso en cada uno -- sin esto, un
+      // fallo intermitente en una red rara no deja ningun rastro util.
+      const detail = `${err?.message || "error"} (${url})`;
       if (attempt >= MAX_ATTEMPTS) {
-        throw new Error("No se pudo conectar al servidor de la sala.");
+        throw new Error(`No se pudo conectar al servidor de la sala. Ultimo intento: ${detail}`);
       }
-      onRetry?.(attempt + 1, MAX_ATTEMPTS);
+      onRetry?.(attempt + 1, MAX_ATTEMPTS, detail);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     }
   }

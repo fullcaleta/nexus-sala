@@ -16,9 +16,9 @@ import {
   kickUser,
   disconnect,
   fetchTurnCredentials,
-} from "./realtime.js?v=8";
-import { createWebRTCManager } from "./webrtc.js?v=18";
-import { createSfuManager } from "./sfu.js?v=8";
+} from "./realtime.js?v=9";
+import { createWebRTCManager } from "./webrtc.js?v=19";
+import { createSfuManager } from "./sfu.js?v=9";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
@@ -788,14 +788,16 @@ async function joinRoom() {
   els.joinError.textContent = "Conectando...";
   let welcome;
   try {
-    welcome = await connect(userId, username, modKeyFromUrl, (attempt, total) => {
+    welcome = await connect(userId, username, modKeyFromUrl, (attempt, total, detail) => {
       els.joinError.textContent = `Conectando... (intento ${attempt} de ${total})`;
+      debugLog(`[JOIN] intento ${attempt - 1} de ${total} fallo: ${detail}`);
     });
   } catch (err) {
     els.joinError.textContent =
       err.code === "name-taken"
         ? "Ese nombre ya lo está usando alguien en la sala. Elige otro."
         : "No se pudo conectar al servidor de la sala. Intenta de nuevo.";
+    debugLog(`[JOIN] fallo definitivo: ${err.message}`);
     return;
   }
   els.joinError.textContent = "";
