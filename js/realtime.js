@@ -4,12 +4,24 @@
 // en produccion tiene que ser wss:// (seguro) — los navegadores no permiten
 // mezclar HTTPS con un WebSocket inseguro.
 const PUBLIC_SERVER_URL = "wss://nexus-sala.duckdns.org";
+// Mismo servidor, mismo dominio, pero en otro puerto (ver docker/Caddyfile):
+// confirmado en producción que algunos operadores móviles filtran HTTPS en
+// el 443 hacia esta IP puntual (por reputación, esta IP la escanean seguido
+// bots de internet), aunque el resto del trafico de esa misma red funcione
+// bien -- un celular que no podia entrar por 443 SI llegaba a un servidor
+// de prueba en otro puerto. Sirve de respaldo automatico, no reemplaza al
+// 443 (que sigue siendo el camino normal para todos los demas).
+const PUBLIC_SERVER_URL_FALLBACK = "wss://nexus-sala.duckdns.org:8080";
 const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 export const SERVER_URL = isLocal ? "ws://localhost:8080" : PUBLIC_SERVER_URL;
+function uploadBaseFor(serverUrl) {
+  return serverUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+}
 // Mismo servidor, pero por HTTP normal: lo usa la subida de archivos (ver
-// uploadMedia), que no puede ir por WebSocket por el limite de tamano de
-// mensaje del lado del servidor.
-const UPLOAD_BASE_URL = SERVER_URL.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+// uploadMedia) y las credenciales TURN, que no pueden ir por WebSocket. Se
+// actualiza solo si connect() termina usando el puerto de respaldo, para
+// que estos pedidos vayan por el mismo camino que ya funciono.
+let UPLOAD_BASE_URL = uploadBaseFor(SERVER_URL);
 
 // Algunas redes (en particular, dispositivos conectados a la misma red que
 // el servidor) a veces fallan al conectar por un problema del router al
@@ -48,10 +60,10 @@ export function offAll(type) {
   listeners.delete(type);
 }
 
-function attemptConnect(userId, name, modKey) {
+function attemptConnect(url, userId, name, modKey) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const socket = new WebSocket(SERVER_URL);
+    const socket = new WebSocket(url);
 
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -108,12 +120,24 @@ function attemptConnect(userId, name, modKey) {
   });
 }
 
+// Intentos 1, 3, 5... van al 443 (el camino normal); 2, 4... al puerto de
+// respaldo -- asi, sea cual sea el que este bloqueado en la red de quien
+// entra, el otro lo saca andando en un par de intentos, sin tener que saber
+// de antemano cual de los dos va a fallar.
+function urlForAttempt(attempt) {
+  if (isLocal) return SERVER_URL;
+  return attempt % 2 === 1 ? PUBLIC_SERVER_URL : PUBLIC_SERVER_URL_FALLBACK;
+}
+
 // onRetry(intentoActual, totalIntentos) se llama antes de cada reintento,
 // para que la interfaz pueda mostrar "conectando... (intento 2 de 5)".
 export async function connect(userId, name, modKey, onRetry) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const url = urlForAttempt(attempt);
     try {
-      return await attemptConnect(userId, name, modKey);
+      const result = await attemptConnect(url, userId, name, modKey);
+      UPLOAD_BASE_URL = uploadBaseFor(url);
+      return result;
     } catch (err) {
       // Reintentar con el mismo nombre no sirve de nada: el servidor lo va
       // a rechazar de nuevo, siempre por el mismo motivo.
