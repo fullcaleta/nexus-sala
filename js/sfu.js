@@ -30,6 +30,7 @@ export function createSfuManager({
   onModeratorExtraStreamEnded,
   onCallStream,
   onCallStreamEnded,
+  onCallMuteChanged,
   onDebugLog,
 }) {
   const log = (msg) => {
@@ -276,6 +277,17 @@ export function createSfuManager({
   // si se muestra o no) -- ver el mismo aviso en server/server.js.
   onRealtime("sfu-mute-changed", (msg) => {
     if (msg.ownerUserId === userId) return;
+    // callAudio/callVideo no tienen recuadro en la sala (van aparte, ver
+    // onCallStream/onModeratorExtraStream) -- el otro participante de la
+    // llamada necesita un aviso propio para saber si dejar de mostrar el
+    // video: pausar el consumer no siempre dispara el evento nativo
+    // "mute"/"unmute" del track de forma confiable (confirmado con un caso
+    // real: el video quedaba pegado en el ultimo cuadro para el otro
+    // participante aunque el que llamaba ya lo habia apagado).
+    if (MOD_ONLY_ROLES.has(msg.role)) {
+      onCallMuteChanged?.(msg.ownerUserId, msg.role, msg.muted);
+      return;
+    }
     if (msg.muted) markRoleInactive(msg.ownerUserId, msg.role);
     else markRoleActive(msg.ownerUserId, msg.role);
     syncPeerVisibility(msg.ownerUserId);

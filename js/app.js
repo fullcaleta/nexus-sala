@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=9";
-import { createSfuManager } from "./sfu.js?v=12";
+import { createSfuManager } from "./sfu.js?v=13";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -851,6 +851,14 @@ async function joinRoom() {
     },
     onCallStream: handleCallTrack,
     onCallStreamEnded: handleCallStreamEnded,
+    onCallMuteChanged: (peerId, role, muted) => {
+      if (peerId !== callPeerId || role !== "callVideo") return;
+      // Pausar el consumer del otro lado no siempre dispara el "mute"/
+      // "unmute" nativo del track (ver nota en sfu.js) -- este aviso explicito
+      // es lo que de verdad oculta/muestra el video cuando el otro
+      // participante apaga/prende su camara en plena llamada.
+      els.callPanel.classList.toggle("has-remote-video", !muted);
+    },
   });
   // Pone al dia sobre quien ya estaba mandando camara/mic antes de entrar
   // (equivalente SFU de recorrer welcome.members en el mesh viejo).
