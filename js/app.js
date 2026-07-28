@@ -1378,13 +1378,6 @@ async function startOutgoingCall() {
     return;
   }
   const peerId = activeThread;
-  // Despierta el AudioContext compartido ACA, en el propio clic (gesto real
-  // del usuario) -- no cuando llegue el audio del otro lado mas adelante
-  // (eso pasa dentro de un evento de red, no de un gesto, y el navegador a
-  // veces no lo deja arrancar de verdad ahi). Confirmado con un caso real:
-  // el primer intento de llamada fallaba en silencio y, tras colgar y volver
-  // a llamar, andaba bien -- consistente con esta carrera.
-  getSharedAudioContext();
   // El microfono se pide ACA, en el momento mismo del clic -- no despues de
   // que el otro lado acepte (eso llega por un mensaje de red, no por un
   // gesto directo del usuario). Algunos navegadores estrictos (Safari/iOS
@@ -1394,6 +1387,14 @@ async function startOutgoingCall() {
   // ya mismo, dentro del propio clic, evita ese riesgo de raiz.
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // El AudioContext se despierta DESPUES de tener el microfono, no antes
+    // (se probo antes, ver historial): un caso real mostro que el iPhone 7
+    // capta puro silencio en la llamada (confirmado con alguien hablando
+    // fuerte al lado) incluso con esto ya arreglado, asi que se prueba
+    // sacar de en medio cualquier interaccion entre activar el AudioContext
+    // y pedir el microfono, por las dudas sea parte del problema en
+    // Safari/iOS viejo.
+    getSharedAudioContext();
     measureLocalMicLevel(callLocalStream, "llamando");
     ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
   } catch (err) {
