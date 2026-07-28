@@ -1165,11 +1165,16 @@ body {
      botones de abajo (call-panel-controls) quedaban fuera de la pantalla
      visible aunque el elemento "existiera" mas abajo. Sin height fijo, el
      alto real disponible es el que manda, en cualquier version de Safari. */
+  /* Sin ancho explicito: left:0 + right:0 ya alcanza para ocupar el ancho
+     visible en un elemento "fixed". 100vw (lo que habia antes) puede ser
+     MAS ANCHO que la pantalla real visible en Safari/iOS -- mismo tipo de
+     problema que el alto con 100vh (ver nota arriba), confirmado con un
+     caso real en el iPhone 7: el panel se corria hacia la derecha y no
+     entraba completo en la pantalla. */
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  width: 100vw; /* el ancho no tiene el problema de la barra de Safari, solo el alto */
   border-radius: 0;
 }
 
