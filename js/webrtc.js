@@ -162,6 +162,32 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     sendSignal(peerId, "call-audio-silent", {});
   }
 
+  // Mas agresivo que setCallAudioTrack: cierra la conexion de la llamada
+  // entera y crea una nueva de cero (con los mismos tracks), en vez de
+  // solo reemplazar el track y renegociar. Se prueba porque eso ultimo
+  // (confirmado con logs reales) no alcanzo -- si el problema no es el
+  // track sino el propio RTCPeerConnection/sender que quedo mandando
+  // silencio sin importar que se le ponga adentro, solo una conexion
+  // nueva de cero lo puede destrabar. El video (si estaba prendido) hay
+  // que re-aplicarlo aparte con setCallVideoTrack (ver handleAudioSilentRequest
+  // en app.js): el transceiver de video nuevo arranca vacio, igual que al
+  // armar la llamada por primera vez.
+  function restartCallConnection(peerId, stream) {
+    const oldPc = callPeerConnections.get(peerId);
+    if (oldPc) {
+      // Se saca el listener de cierre ANTES de cerrar: onconnectionstatechange
+      // llama a endCall/onCallEnded cuando el estado pasa a "closed", y eso
+      // colgaria la llamada entera en vez de solo reiniciar la conexion.
+      oldPc.onconnectionstatechange = null;
+      oldPc.close();
+    }
+    callPeerConnections.delete(peerId);
+    callVideoSenders.delete(peerId);
+    callAudioSenders.delete(peerId);
+    getOrCreateCallPeerConnection(peerId, stream);
+    scheduleCallNegotiation(peerId);
+  }
+
   function endCall(peerId) {
     const pc = callPeerConnections.get(peerId);
     if (pc) {
@@ -235,6 +261,7 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     setCallVideoTrack,
     setCallAudioTrack,
     notifyAudioSilent,
+    restartCallConnection,
     endCall,
     destroy,
   };

@@ -17,7 +17,7 @@ import {
   disconnect,
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
-import { createWebRTCManager } from "./webrtc.js?v=13";
+import { createWebRTCManager } from "./webrtc.js?v=14";
 import { createSfuManager } from "./sfu.js?v=5";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
@@ -1474,12 +1474,15 @@ function monitorCallAudioLevel(ctx, source, peerId) {
 
 // El otro lado de la llamada avisa (ver notifyAudioSilent en webrtc.js) que
 // no le esta llegando audio real del propio microfono, aunque a nivel de
-// WebRTC el track se vea "vivo" -- se pide un microfono nuevo de cero y se
-// reemplaza en la conexion (renegociando, ver setCallAudioTrack en
-// webrtc.js), en vez de pedirle a la persona que cuelgue y vuelva a llamar.
-// No se toca la copia que recibe el moderador (ver callAudioCloneForMod):
-// si el otro lado la sigue escuchando bien, el problema es solo del lado
-// de esta conexion directa.
+// WebRTC el track se vea "vivo" -- en vez de pedirle a la persona que
+// cuelgue y vuelva a llamar, se pide un microfono nuevo de cero Y se
+// reinicia la conexion de la llamada entera (ver restartCallConnection en
+// webrtc.js). Antes esto solo reemplazaba el track y renegociaba
+// (setCallVideoTrack, sin recrear la conexion), pero confirmado con logs
+// reales que no alcanzaba -- el sender de audio seguia mandando silencio
+// sin importar que track se le pusiera. No se toca la copia que recibe el
+// moderador (ver callAudioCloneForMod): esa viaja por el SFU, no por esta
+// conexion directa, y ya funciona bien.
 //
 // Se probo tambien dispararlo PROACTIVAMENTE (sin esperar el aviso) a los
 // pocos segundos de conectar, para no tener que esperar los 10s del
@@ -1500,8 +1503,12 @@ async function handleAudioSilentRequest(peerId) {
     callLocalStream.removeTrack(oldTrack);
     oldTrack.stop();
     callLocalStream.addTrack(newTrack);
-    webrtcManager.setCallAudioTrack(callPeerId, newTrack);
-    console.log("[NEXUS-CALL] microfono de la llamada refrescado");
+    webrtcManager.restartCallConnection(callPeerId, callLocalStream);
+    if (callVideoOn) {
+      const videoTrack = callLocalStream.getVideoTracks()[0];
+      if (videoTrack) webrtcManager.setCallVideoTrack(callPeerId, videoTrack);
+    }
+    console.log("[NEXUS-CALL] microfono y conexion de la llamada refrescados");
   } catch (err) {
     console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err);
   }
