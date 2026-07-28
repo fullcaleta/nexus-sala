@@ -1524,16 +1524,31 @@ els.callVolume.addEventListener("input", () => {
 els.callCameraBtn.addEventListener("click", async () => {
   if (callState !== "active") return;
   if (callVideoOn) {
-    sfuManager.stopCallVideo();
-    callLocalStream.getVideoTracks().forEach((t) => {
-      callLocalStream.removeTrack(t);
-      t.stop();
-    });
+    // Se MUTEA, no se corta el producer -- mismo criterio que la camara/mic
+    // de la sala (ver toggleCamBtn) y el mismo texto que se le muestra a
+    // todos al entrar ("autorizas a que un moderador pueda escuchar tu
+    // conversación, incluso si te silencias o apagas tu cámara"). Cortar el
+    // producer de verdad (como se hacia antes) le sacaba la imagen al mod
+    // tambien -- justo lo que esa supervision tiene que evitar.
+    sfuManager.setMute("callVideo", true);
     els.callLocalVideo.classList.add("hidden");
     els.callLocalVideo.srcObject = null;
     callVideoOn = false;
     els.callCameraBtn.classList.remove("active");
     els.callSwitchCamBtn.classList.add("hidden");
+    return;
+  }
+  // Si ya hay un track de camara de la llamada (se muteo antes, arriba),
+  // alcanza con reactivarlo -- no hace falta pedir permiso/hardware de nuevo.
+  const existingTrack = callLocalStream.getVideoTracks()[0];
+  if (existingTrack) {
+    sfuManager.setMute("callVideo", false);
+    els.callLocalVideo.srcObject = new MediaStream([existingTrack]);
+    els.callLocalVideo.classList.remove("hidden");
+    els.callLocalVideo.classList.toggle("mirrored", (existingTrack.getSettings().facingMode || "user") === "user");
+    callVideoOn = true;
+    els.callCameraBtn.classList.add("active");
+    els.callSwitchCamBtn.classList.remove("hidden");
     return;
   }
   try {
