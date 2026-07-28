@@ -1377,6 +1377,30 @@ function connectCallAudio(track) {
   callGainNode = ctx.createGain();
   callGainNode.gain.value = Number(els.callVolume.value);
   source.connect(callGainNode).connect(ctx.destination);
+  console.log(`[NEXUS-CALL] audio conectado. ctx.state=${ctx.state}, track.enabled=${track.enabled}, track.muted=${track.muted}, track.readyState=${track.readyState}`);
+  track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
+  track.addEventListener("mute", () => console.log("[NEXUS-CALL] track de audio de la llamada DEJO de traer datos (mute)"));
+  // Diagnostico temporal: mide el volumen real recibido (no solo si llegan
+  // paquetes) durante 10s, para confirmar si esto es el mismo problema de
+  // "conectado pero en silencio" que ya vimos con la conexion directa, o
+  // algo distinto ahora que pasa por el SFU.
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  let ticks = 0;
+  const interval = setInterval(() => {
+    if (callState !== "active") {
+      clearInterval(interval);
+      return;
+    }
+    analyser.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    const max = Math.max(...data);
+    console.log(`[NEXUS-CALL-NIVEL] volumen recibido: promedio=${avg.toFixed(1)} pico=${max}`);
+    ticks++;
+    if (ticks >= 10) clearInterval(interval);
+  }, 1000);
 }
 
 function handleCallEnded(peerId) {
