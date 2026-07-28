@@ -138,17 +138,21 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     scheduleCallNegotiation(peerId);
   }
 
-  // Reemplaza el microfono que se manda a esta llamada por uno nuevo, sin
-  // renegociar (mismo transceiver de audio ya declarado desde el arranque).
-  // Se usa cuando el OTRO lado avisa que no le esta llegando audio de
-  // verdad (ver "call-audio-silent" mas abajo): un problema conocido de
-  // Safari/iOS viejo donde el track queda "vivo" a nivel de WebRTC (dispara
-  // "unmute", ICE conectado) pero lo que manda es silencio -- un track
-  // nuevo (pedido de cero con getUserMedia) suele arrancar bien.
+  // Reemplaza el microfono que se manda a esta llamada por uno nuevo. Se usa
+  // cuando el OTRO lado avisa que no le esta llegando audio de verdad (ver
+  // "call-audio-silent" mas abajo): un problema conocido de Safari/iOS viejo
+  // donde el track queda "vivo" a nivel de WebRTC (dispara "unmute", ICE
+  // conectado) pero lo que manda es silencio. Mismo caso que setCallVideoTrack
+  // aca arriba (mismo dispositivo, mismo motivo): replaceTrack() solo no
+  // alcanza para que Safari viejo arranque a mandar audio de verdad -- hace
+  // falta ademas una renegociacion real.
   function setCallAudioTrack(peerId, track) {
     const sender = callAudioSenders.get(peerId);
     if (!sender) return;
-    sender.replaceTrack(track).catch((err) => console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err));
+    sender
+      .replaceTrack(track)
+      .then(() => scheduleCallNegotiation(peerId))
+      .catch((err) => console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err));
   }
 
   // Le avisa al otro lado de la llamada que no le esta llegando audio real
