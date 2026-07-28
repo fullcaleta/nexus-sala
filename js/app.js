@@ -748,9 +748,13 @@ async function autoAcquireIfAlreadyGranted() {
       const track = micStream.getAudioTracks()[0];
       localStream.addTrack(track);
       await sfuManager.produceTrack("mic", track, undefined, !micOn);
+      debugLog("[AUTO-MIC] microfono producido ok (ya tenia permiso)");
     } catch (err) {
       // permiso revocado justo ahora u otro problema: se pedira con el boton
+      debugLog(`[AUTO-MIC] fallo: ${err.message}`);
     }
+  } else {
+    debugLog("[AUTO-MIC] sin permiso previo de microfono, no se auto-activa");
   }
   if (await permissionAlreadyGranted("camera")) {
     let track = null;
@@ -762,18 +766,22 @@ async function autoAcquireIfAlreadyGranted() {
       localVideoEl = document.querySelector(`#tile-${userId} video`);
       if (localVideoEl) localVideoEl.srcObject = localStream;
       await sfuManager.produceTrack("camera", track, undefined, !camOn);
+      debugLog(`[AUTO-CAM] camara producida ok (ya tenia permiso). settings=${JSON.stringify(track.getSettings())}`);
     } catch (err) {
       // permiso revocado justo ahora, se llego al limite de camaras
       // simultaneas (ver MAX_CAMERAS en server/sfu.js), u otro problema: se
       // deshace la captura local si ya se habia agregado, para no dejar una
       // vista previa que en realidad no le llega a nadie. Se pedira con el
       // boton si el usuario lo intenta a mano.
+      debugLog(`[AUTO-CAM] fallo: ${err.message}`);
       if (track) {
         localStream.removeTrack(track);
         track.stop();
         if (localVideoEl) localVideoEl.srcObject = localStream;
       }
     }
+  } else {
+    debugLog("[AUTO-CAM] sin permiso previo de camara, no se auto-activa");
   }
   updateCamButtonUI();
 }
