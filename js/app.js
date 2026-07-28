@@ -1332,6 +1332,13 @@ async function startOutgoingCall() {
     return;
   }
   const peerId = activeThread;
+  // Despierta el AudioContext compartido ACA, en el propio clic (gesto real
+  // del usuario) -- no cuando llegue el audio del otro lado mas adelante
+  // (eso pasa dentro de un evento de red, no de un gesto, y el navegador a
+  // veces no lo deja arrancar de verdad ahi). Confirmado con un caso real:
+  // el primer intento de llamada fallaba en silencio y, tras colgar y volver
+  // a llamar, andaba bien -- consistente con esta carrera.
+  getSharedAudioContext();
   // El microfono se pide ACA, en el momento mismo del clic -- no despues de
   // que el otro lado acepte (eso llega por un mensaje de red, no por un
   // gesto directo del usuario). Algunos navegadores estrictos (Safari/iOS
