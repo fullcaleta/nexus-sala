@@ -17,7 +17,7 @@ import {
   disconnect,
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
-import { createWebRTCManager } from "./webrtc.js?v=15";
+import { createWebRTCManager } from "./webrtc.js?v=16";
 import { createSfuManager } from "./sfu.js?v=6";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
@@ -142,6 +142,34 @@ function getSharedAudioContext() {
   if (sharedAudioContext.state === "suspended") sharedAudioContext.resume();
   return sharedAudioContext;
 }
+
+// Panel de diagnostico visible EN LA PANTALLA del celular, ademas de la
+// consola de siempre -- se agrega solo para investigar el bug de audio en
+// llamadas del iPhone 7, que no tiene forma de conectarse a un Mac para ver
+// su consola real. Doble tap en cualquier parte de la pantalla lo
+// muestra/oculta, para no estorbar el resto del tiempo.
+let debugPanelEl = null;
+let debugPanelVisible = false;
+function debugLog(msg) {
+  console.log(msg);
+  if (!debugPanelEl) {
+    debugPanelEl = document.createElement("div");
+    debugPanelEl.style.cssText =
+      "position:fixed;bottom:0;left:0;right:0;max-height:45vh;overflow-y:auto;" +
+      "background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.4 monospace;" +
+      "padding:6px;z-index:99999;white-space:pre-wrap;word-break:break-word;";
+    document.body.appendChild(debugPanelEl);
+    debugPanelEl.classList.toggle("hidden", !debugPanelVisible);
+  }
+  const line = document.createElement("div");
+  line.textContent = msg;
+  debugPanelEl.appendChild(line);
+  debugPanelEl.scrollTop = debugPanelEl.scrollHeight;
+}
+document.addEventListener("dblclick", () => {
+  debugPanelVisible = !debugPanelVisible;
+  debugPanelEl?.classList.toggle("hidden", !debugPanelVisible);
+});
 
 // Un WAV de silencio total (8 muestras a cero), para "activar" el permiso
 // de audio en iOS dentro del gesto del usuario. Antes se lo intentaba con
@@ -801,6 +829,7 @@ async function joinRoom() {
     iceServers,
     onCallTrack: handleCallTrack,
     onCallEnded: handleCallEnded,
+    onDebugLog: debugLog,
   });
   // Video/audio normal de la sala: pasa por el SFU (server/sfu.js). El
   // servidor es quien decide que le llega a cada quien -- no hace falta
@@ -1310,6 +1339,7 @@ async function startOutgoingCall() {
   // ya mismo, dentro del propio clic, evita ese riesgo de raiz.
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    measureLocalMicLevel(callLocalStream, "llamando");
   } catch (err) {
     alert("No se pudo acceder al micrófono para hacer la llamada.");
     return;
@@ -1346,6 +1376,7 @@ async function acceptIncomingCall() {
   stopCallRingtone();
   try {
     callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    measureLocalMicLevel(callLocalStream, "atendiendo");
   } catch (err) {
     sendCallReject(peerId);
     resetCallState();
@@ -1399,13 +1430,12 @@ function connectCallAudio(track) {
   callGainNode = ctx.createGain();
   callGainNode.gain.value = Number(els.callVolume.value);
   source.connect(callGainNode).connect(ctx.destination);
-  console.log(`[NEXUS-CALL] audio conectado. ctx.state=${ctx.state}, track.enabled=${track.enabled}, track.muted=${track.muted}, track.readyState=${track.readyState}`);
-  track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
-  track.addEventListener("mute", () => console.log("[NEXUS-CALL] track de audio de la llamada DEJO de traer datos (mute)"));
+  debugLog(`[CALL-RX] audio conectado. ctx.state=${ctx.state}, track.enabled=${track.enabled}, track.muted=${track.muted}, track.readyState=${track.readyState}`);
+  track.addEventListener("unmute", () => debugLog("[CALL-RX] track de audio de la llamada YA trae datos reales (unmute)"));
+  track.addEventListener("mute", () => debugLog("[CALL-RX] track de audio de la llamada DEJO de traer datos (mute)"));
   // Diagnostico temporal: mide el volumen real recibido (no solo si llegan
-  // paquetes) durante 10s, para confirmar si esto es el mismo problema de
-  // "conectado pero en silencio" que ya vimos con la conexion directa, o
-  // algo distinto ahora que pasa por el SFU.
+  // paquetes) durante 15s, para confirmar si esto es el mismo problema de
+  // "conectado pero en silencio" del lado que RECIBE.
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
   source.connect(analyser);
@@ -1419,9 +1449,44 @@ function connectCallAudio(track) {
     analyser.getByteFrequencyData(data);
     const avg = data.reduce((a, b) => a + b, 0) / data.length;
     const max = Math.max(...data);
-    console.log(`[NEXUS-CALL-NIVEL] volumen recibido: promedio=${avg.toFixed(1)} pico=${max}`);
+    debugLog(`[CALL-RX-NIVEL] volumen recibido (el otro lado mandando): promedio=${avg.toFixed(1)} pico=${max}`);
     ticks++;
-    if (ticks >= 10) clearInterval(interval);
+    if (ticks >= 15) clearInterval(interval);
+  }, 1000);
+}
+
+// Diagnostico: mide el nivel de audio del MICROFONO PROPIO justo despues de
+// capturarlo, ANTES de mandarlo por ninguna conexion -- nunca se habia
+// medido este lado. Si esto ya sale en 0 aca, el silencio nace en la propia
+// captura del dispositivo/navegador (no en la red ni en la conexion). Si
+// esto sale con nivel real pero el otro lado sigue recibiendo 0, el
+// problema esta en el camino (envio/transporte), no en la captura.
+function measureLocalMicLevel(stream, etiqueta) {
+  const track = stream.getAudioTracks()[0];
+  if (!track) return;
+  let settings = {};
+  try {
+    settings = track.getSettings();
+  } catch {}
+  debugLog(`[MIC-LOCAL:${etiqueta}] settings=${JSON.stringify(settings)} enabled=${track.enabled} muted=${track.muted} readyState=${track.readyState}`);
+  const ctx = getSharedAudioContext();
+  const source = ctx.createMediaStreamSource(new MediaStream([track]));
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser); // sin llegar a ctx.destination: se mide sin reproducirlo (evita eco)
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  let ticks = 0;
+  const interval = setInterval(() => {
+    if (track.readyState === "ended") {
+      clearInterval(interval);
+      return;
+    }
+    analyser.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    const max = Math.max(...data);
+    debugLog(`[MIC-LOCAL:${etiqueta}] nivel propio antes de mandarlo: promedio=${avg.toFixed(1)} pico=${max} enabled=${track.enabled} muted=${track.muted}`);
+    ticks++;
+    if (ticks >= 15) clearInterval(interval);
   }, 1000);
 }
 

@@ -7,7 +7,14 @@ import { sendSignal, on as onRealtime } from "./realtime.js?v=6";
 // conexion directa, asi que esta parte se queda igual que siempre.
 const FALLBACK_ICE_SERVERS = { iceServers: [{ urls: "stun:nexus-sala.duckdns.org:33478" }] };
 
-export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS, onCallTrack, onCallEnded, onAudioSilentRequest }) {
+export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS, onCallTrack, onCallEnded, onAudioSilentRequest, onDebugLog }) {
+  // Ademas de la consola de siempre, manda las lineas clave al panel visible
+  // en pantalla de app.js (ver debugLog ahi) -- se agrego para poder
+  // investigar el bug de audio del iPhone 7 sin depender de un Mac/cable.
+  const log = (msg) => {
+    console.log(msg);
+    onDebugLog?.(msg);
+  };
   // --- Llamada privada 1 a 1 ---
   const callPeerConnections = new Map(); // peerId -> RTCPeerConnection
   const callVideoSenders = new Map(); // peerId -> RTCRtpSender (transceiver de video, ver getOrCreateCallPeerConnection)
@@ -64,6 +71,40 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
     }
   }
 
+  // Diagnostico: lee del lado que MANDA (no del que recibe) que cree el
+  // propio navegador que esta enviando -- bytesSent/packetsSent (si crecen,
+  // esta mandando paquetes de verdad) y, si el navegador lo expone,
+  // audioLevel/totalAudioEnergy de la fuente real (si esto da 0 de forma
+  // sostenida mientras bytesSent SI crece, el navegador esta mandando
+  // paquetes de audio vacios/silenciosos a proposito, no un problema de
+  // red). Nunca se habia mirado este lado, solo el que recibe.
+  function pollOutboundAudioStats(peerId, pc) {
+    let secs = 0;
+    const iv = setInterval(async () => {
+      if (!callPeerConnections.has(peerId) || pc.connectionState === "closed") {
+        clearInterval(iv);
+        return;
+      }
+      secs++;
+      if (secs > 20) {
+        clearInterval(iv);
+        return;
+      }
+      try {
+        const stats = await pc.getStats(null);
+        stats.forEach((r) => {
+          if ((r.type === "outbound-rtp" && r.kind === "audio") || (r.type === "media-source" && r.kind === "audio")) {
+            const campos = ["type", "bytesSent", "packetsSent", "audioLevel", "totalAudioEnergy", "totalSamplesDuration"]
+              .filter((k) => r[k] !== undefined)
+              .map((k) => `${k}=${typeof r[k] === "number" ? r[k].toFixed(4) : r[k]}`)
+              .join(" ");
+            log(`[CALL-TX-STATS] con ${peerId}: ${campos}`);
+          }
+        });
+      } catch {}
+    }, 1000);
+  }
+
   // stream trae el microfono (siempre) de quien llama/atiende. La camara
   // arranca apagada a proposito (ver setCallVideoTrack): se declara un
   // transceiver de video desde el vamos, sin track todavia, para poder
@@ -93,24 +134,28 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
       onCallTrack?.(peerId, event.streams[0], event.track);
     };
 
+    let sendStatsStarted = false;
+
     pc.oniceconnectionstatechange = () => {
-      console.log(`[NEXUS-CALL] ICE con ${peerId}: ${pc.iceConnectionState}`);
-      // Diagnostico temporal: al conectar, mostrar que TIPO de candidato se
-      // uso de verdad (host = directo en la LAN, srflx = STUN, relay =
-      // TURN) -- para saber si el problema de audio en silencio pasa
-      // realmente por el relay TURN o no.
+      log(`[CALL-ICE] estado con ${peerId}: ${pc.iceConnectionState}`);
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        // Que TIPO de candidato se uso de verdad (host = directo en la LAN,
+        // srflx = STUN, relay = TURN).
         pc.getStats(null).then((stats) => {
           stats.forEach((report) => {
             if (report.type === "candidate-pair" && report.state === "succeeded") {
               const local = stats.get(report.localCandidateId);
               const remote = stats.get(report.remoteCandidateId);
-              console.log(
-                `[NEXUS-CALL-ICE] par de candidatos en uso con ${peerId}: local=${local?.candidateType} (${local?.address || local?.ip}:${local?.port}) remote=${remote?.candidateType} (${remote?.address || remote?.ip}:${remote?.port})`
+              log(
+                `[CALL-ICE] par de candidatos con ${peerId}: local=${local?.candidateType} (${local?.address || local?.ip}:${local?.port}) remote=${remote?.candidateType} (${remote?.address || remote?.ip}:${remote?.port})`
               );
             }
           });
         });
+        if (!sendStatsStarted) {
+          sendStatsStarted = true;
+          pollOutboundAudioStats(peerId, pc);
+        }
       }
     };
 
