@@ -121,33 +121,15 @@ function getSharedAudioContext() {
   return sharedAudioContext;
 }
 
-// Panel de diagnostico visible EN LA PANTALLA del celular, ademas de la
-// consola de siempre -- se agrega solo para investigar el bug de audio en
-// llamadas del iPhone 7, que no tiene forma de conectarse a un Mac para ver
-// su consola real. Doble tap en cualquier parte de la pantalla lo
-// muestra/oculta, para no estorbar el resto del tiempo.
-let debugPanelEl = null;
-let debugPanelVisible = false;
+// Antes esto tambien mostraba un panel en pantalla (doble tap para ver/
+// ocultar), agregado solo para investigar el bug de audio en llamadas del
+// iPhone 7 sin poder conectarse a un Mac. Ya no hace falta -- se saca el
+// panel visible (nadie deberia poder andar viendo estos datos con solo
+// tocar la pantalla), pero se deja este mismo nombre de funcion en el
+// resto del codigo para no tener que tocar cada punto donde se usa.
 function debugLog(msg) {
   console.log(msg);
-  if (!debugPanelEl) {
-    debugPanelEl = document.createElement("div");
-    debugPanelEl.style.cssText =
-      "position:fixed;bottom:0;left:0;right:0;max-height:45vh;overflow-y:auto;" +
-      "background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.4 monospace;" +
-      "padding:6px;z-index:99999;white-space:pre-wrap;word-break:break-word;";
-    document.body.appendChild(debugPanelEl);
-    debugPanelEl.classList.toggle("hidden", !debugPanelVisible);
-  }
-  const line = document.createElement("div");
-  line.textContent = msg;
-  debugPanelEl.appendChild(line);
-  debugPanelEl.scrollTop = debugPanelEl.scrollHeight;
 }
-document.addEventListener("dblclick", () => {
-  debugPanelVisible = !debugPanelVisible;
-  debugPanelEl?.classList.toggle("hidden", !debugPanelVisible);
-});
 
 // Un WAV de silencio total (8 muestras a cero), para "activar" el permiso
 // de audio en iOS dentro del gesto del usuario. Antes se lo intentaba con
@@ -1325,6 +1307,7 @@ function resetCallState() {
   els.callIncomingOverlay.classList.add("hidden");
   els.callPanel.classList.add("hidden");
   els.callPanel.classList.remove("has-remote-video");
+  els.callPanel.classList.remove("has-local-video");
   els.callRemoteVideo.srcObject = null;
   els.callLocalVideo.srcObject = null;
   els.callLocalVideo.classList.add("hidden");
@@ -1379,6 +1362,7 @@ function showCallPanel() {
   els.callPanelName.textContent = callPeerName;
   els.callPanel.classList.remove("hidden");
   els.callPanel.classList.remove("has-remote-video");
+  els.callPanel.classList.remove("has-local-video");
   resetCallVideoRoles();
   callMuted = false;
   els.callMuteBtn.textContent = "🎤";
@@ -1675,6 +1659,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callLocalVideo.classList.add("hidden");
     els.callLocalVideo.srcObject = null;
     callVideoOn = false;
+    els.callPanel.classList.remove("has-local-video");
     els.callCameraBtn.classList.remove("active");
     els.callSwitchCamBtn.classList.add("hidden");
     return;
@@ -1688,6 +1673,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callLocalVideo.classList.remove("hidden");
     els.callLocalVideo.classList.toggle("mirrored", (existingTrack.getSettings().facingMode || "user") === "user");
     callVideoOn = true;
+    els.callPanel.classList.add("has-local-video");
     els.callCameraBtn.classList.add("active");
     els.callSwitchCamBtn.classList.remove("hidden");
     return;
@@ -1702,6 +1688,7 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callLocalVideo.classList.remove("hidden");
     els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
     callVideoOn = true;
+    els.callPanel.classList.add("has-local-video");
     els.callCameraBtn.classList.add("active");
     els.callSwitchCamBtn.classList.remove("hidden");
   } catch (err) {
@@ -1765,6 +1752,16 @@ function isCallPanelMaximized() {
 }
 
 els.callFullscreenBtn.addEventListener("click", () => {
+  if (!isCallPanelMaximized()) {
+    // Si el panel se habia arrastrado antes (ver makeCallPanelDraggable
+    // mas abajo), le quedan left/top/right puestos directo en el elemento
+    // -- eso le gana a las reglas de .call-panel-maximized (que necesitan
+    // top/left/right/bottom:0 para cubrir toda la pantalla), dejando un
+    // panel chico y mal ubicado con el resto de la sala visible alrededor.
+    els.callPanel.style.left = "";
+    els.callPanel.style.top = "";
+    els.callPanel.style.right = "";
+  }
   els.callPanel.classList.toggle("call-panel-maximized");
 });
 

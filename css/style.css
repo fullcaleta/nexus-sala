@@ -1222,8 +1222,13 @@ body {
 }
 
 /* Mientras nadie prendio su camara, no tiene sentido mostrar un recuadro
-   negro vacio: el panel queda chico, solo con los controles. */
-.call-panel.has-remote-video .call-panel-media {
+   negro vacio: el panel queda chico, solo con los controles. Con que
+   CUALQUIERA de los dos lados tenga camara alcanza para mostrar el
+   recuadro -- antes dependia solo de si el OTRO lado tenia video, asi que
+   si prendias tu propia camara pero el otro no tenia, ni vos mismo veias
+   tu propia vista previa. */
+.call-panel.has-remote-video .call-panel-media,
+.call-panel.has-local-video .call-panel-media {
   display: block;
 }
 
