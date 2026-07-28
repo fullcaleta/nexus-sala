@@ -1184,19 +1184,15 @@ els.attachFileInput.addEventListener("change", async () => {
 // del video, si se prende) para poder supervisar, igual que ya pasa con el
 // microfono/camara de la sala general.
 
-// Confirmado con un caso real: el iPhone 7 captura audio real (medido con
-// un AnalyserNode aparte) y lo manda (bytesSent/packetsSent creciendo
-// normal), pero el otro lado recibe los paquetes perfectos (packetsLost=0)
-// y los decodifica en energia exactamente 0 -- ni la red, ni el codec, ni
-// nuestro propio diagnostico son la causa. Lo unico que queda sin probar
-// es el procesamiento que Safari le aplica al audio por dentro antes de
-// codificarlo (cancelacion de eco, supresion de ruido, control automatico
-// de volumen, todos activados por default) -- hay bugs conocidos de WebKit
-// viejo donde ese procesamiento deja al envio de WebRTC sin datos reales
-// aunque el track crudo este viem. El mic de la sala nunca tuvo este
-// problema y usa las mismas constraints por default; se prueba desactivar
-// ese procesamiento SOLO para la llamada, a ver si cambia algo.
-const CALL_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+// Se probo un rato desactivar el procesamiento default del microfono
+// (cancelacion de eco, supresion de ruido, control automatico de volumen)
+// pensando que podia ser la causa del audio vacio en llamadas -- no lo
+// era (la causa real era la falta de un <audio> real reproduciendo el
+// track, ver connectCallAudio), y de paso dejaba el mic de la llamada (y,
+// via ensureRoomMicAccess, el de la sala tambien) sonando mas bajo de lo
+// normal al perder el control automático de volumen. Se vuelve a las
+// constraints por default, iguales a las que ya usa el mic de la sala.
+const CALL_AUDIO_CONSTRAINTS = true;
 
 function stopCallLocalStream() {
   if (callLocalStream) {
