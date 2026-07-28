@@ -987,12 +987,10 @@ async function joinRoom() {
       callRingTimeout = null;
     }
     els.callOutgoingOverlay.classList.add("hidden");
-    // El microfono ya se pidio Y se mando en startOutgoingCall (dentro del
-    // clic que inicio la llamada) -- aca solo queda activar la interfaz y
-    // reproducir lo que haya llegado mientras tanto (ver
-    // flushPendingCallTracks). Si por lo que sea no esta el microfono (no
-    // deberia pasar), se corta en vez de arriesgarse a pedirlo de nuevo
-    // fuera de un gesto directo del usuario.
+    // El microfono ya se pidio en startOutgoingCall (dentro del clic que
+    // inicio la llamada) -- aca solo se usa. Si por lo que sea no esta
+    // (no deberia pasar), se corta en vez de arriesgarse a pedirlo de
+    // nuevo fuera de un gesto directo del usuario.
     if (!callLocalStream) {
       sendCallHangup(callPeerId);
       resetCallState();
@@ -1000,6 +998,7 @@ async function joinRoom() {
       return;
     }
     callState = "active";
+    sfuManager.sendCallAudio(callPeerId, callLocalStream.getAudioTracks()[0]);
     flushPendingCallTracks();
     showCallPanel();
   });
@@ -1414,18 +1413,6 @@ async function startOutgoingCall() {
     getSharedAudioContext();
     measureLocalMicLevel(callLocalStream, "llamando");
     ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
-    // El ENVIO real (sfuManager.sendCallAudio, que crea el RTCRtpSender de
-    // verdad) tambien va ACA, dentro del propio clic -- antes se mandaba
-    // recien al llegar "call-accept" (un mensaje de red, no un gesto). Ya
-    // se habia corregido la CAPTURA para que pasara en el clic, pero el
-    // envio en si seguia disparandose fuera de gesto -- exactamente el
-    // mismo tipo de problema que causo casi todos los bugs de audio de
-    // esta noche. El otro lado no puede escuchar esto todavia (no empieza
-    // a reproducirlo hasta que la llamada este realmente activa, ver
-    // handleCallTrack/flushPendingCallTracks), asi que no hay riesgo de que
-    // se escuchen antes de tiempo -- solo se adelanta el momento en que el
-    // navegador arma la conexion de envio.
-    sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
   } catch (err) {
     alert("No se pudo acceder al micrófono para hacer la llamada.");
     return;
