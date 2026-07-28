@@ -17,7 +17,7 @@ import {
   disconnect,
   fetchTurnCredentials,
 } from "./realtime.js?v=6";
-import { createWebRTCManager } from "./webrtc.js?v=14";
+import { createWebRTCManager } from "./webrtc.js?v=15";
 import { createSfuManager } from "./sfu.js?v=6";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al

@@ -95,6 +95,23 @@ export function createWebRTCManager({ userId, iceServers = FALLBACK_ICE_SERVERS,
 
     pc.oniceconnectionstatechange = () => {
       console.log(`[NEXUS-CALL] ICE con ${peerId}: ${pc.iceConnectionState}`);
+      // Diagnostico temporal: al conectar, mostrar que TIPO de candidato se
+      // uso de verdad (host = directo en la LAN, srflx = STUN, relay =
+      // TURN) -- para saber si el problema de audio en silencio pasa
+      // realmente por el relay TURN o no.
+      if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        pc.getStats(null).then((stats) => {
+          stats.forEach((report) => {
+            if (report.type === "candidate-pair" && report.state === "succeeded") {
+              const local = stats.get(report.localCandidateId);
+              const remote = stats.get(report.remoteCandidateId);
+              console.log(
+                `[NEXUS-CALL-ICE] par de candidatos en uso con ${peerId}: local=${local?.candidateType} (${local?.address || local?.ip}:${local?.port}) remote=${remote?.candidateType} (${remote?.address || remote?.ip}:${remote?.port})`
+              );
+            }
+          });
+        });
+      }
     };
 
     pc.onconnectionstatechange = () => {
