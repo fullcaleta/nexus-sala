@@ -30,7 +30,12 @@ export function createSfuManager({
   onModeratorExtraStreamEnded,
   onCallStream,
   onCallStreamEnded,
+  onDebugLog,
 }) {
+  const log = (msg) => {
+    console.log(msg);
+    onDebugLog?.(msg);
+  };
   let device = null;
   let sendTransport = null;
   let recvTransport = null;
@@ -133,7 +138,44 @@ export function createSfuManager({
     await ensureSendTransport();
     const producer = await sendTransport.produce({ track, appData: { role, targetUserId, initialMuted } });
     producers.set(role, producer);
+    if (role === "callAudio") pollProducerStats(role, producer);
     return producer;
+  }
+
+  // Diagnostico: lee del lado que MANDA (el producer real de mediasoup, no
+  // el track local) que cree el navegador que esta enviando de verdad --
+  // bytesSent/packetsSent (si crecen, esta mandando paquetes) y, si esta
+  // disponible, audioLevel de la fuente real. Antes esto se medía en
+  // webrtc.js (conexion directa vieja); con las llamadas por SFU hace falta
+  // el equivalente aca, o quedamos ciegos a si el problema es que no se
+  // manda nada, o que se manda pero no le llega/decodifica al otro lado.
+  function pollProducerStats(role, producer) {
+    let secs = 0;
+    const iv = setInterval(async () => {
+      if (producer.closed || !producers.get(role) || producers.get(role).id !== producer.id) {
+        clearInterval(iv);
+        return;
+      }
+      secs++;
+      if (secs > 20) {
+        clearInterval(iv);
+        return;
+      }
+      try {
+        const stats = await producer.getStats();
+        stats.forEach((r) => {
+          if ((r.type === "outbound-rtp" || r.type === "media-source") && r.kind === "audio") {
+            const campos = ["type", "bytesSent", "packetsSent", "audioLevel", "totalAudioEnergy", "totalSamplesDuration"]
+              .filter((k) => r[k] !== undefined)
+              .map((k) => `${k}=${typeof r[k] === "number" ? r[k].toFixed(4) : r[k]}`)
+              .join(" ");
+            log(`[CALL-TX-STATS] ${campos}`);
+          }
+        });
+      } catch (err) {
+        log(`[CALL-TX-STATS] error leyendo stats: ${err.message}`);
+      }
+    }, 1000);
   }
 
   // Cambiar de camara, o pasar de camara a pantalla compartida y volver:

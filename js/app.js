@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=9";
-import { createSfuManager } from "./sfu.js?v=11";
+import { createSfuManager } from "./sfu.js?v=12";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -812,6 +812,7 @@ async function joinRoom() {
     // oculta solo mientras no tengan nada en vivo (ahorrar pantalla en la
     // sala general, ver syncPeerVisibility en sfu.js).
     isLocalModerator: isModerator,
+    onDebugLog: debugLog,
     onRemoteStream: (peerId, stream) => {
       const info = knownMembers.get(peerId);
       if (info?.hidden) return; // el video del moderador invisible no se muestra a nadie
