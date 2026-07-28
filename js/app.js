@@ -1363,6 +1363,7 @@ function resetCallState() {
     }
     callGainNode = null;
   }
+  if (callRemoteAudioEl) callRemoteAudioEl.srcObject = null;
 }
 
 // El video remoto arranca siempre como el grande y el propio como el chico
@@ -1521,10 +1522,33 @@ function flushPendingCallTracks() {
 // navegadores son mucho mas estrictos bloqueando autoplay CON sonido que
 // autoplay silenciado.
 let callGainNode = null;
+let callRemoteAudioEl = null;
 function connectCallAudio(track) {
   if (callGainNode) return; // ya conectado
   const ctx = getSharedAudioContext();
-  const source = ctx.createMediaStreamSource(new MediaStream([track]));
+  const remoteStream = new MediaStream([track]);
+  // Un <audio> real, oculto y muteado a nivel nativo, que "reproduce" el
+  // track -- confirmado con datos reales (packets perfectos, energia
+  // decodificada exactamente 0 en el otro lado, en TODAS las combinaciones
+  // de dispositivos probadas) que sin algun elemento real reproduciendo el
+  // stream, el navegador puede quedarse "conectado" a nivel de red/RTP sin
+  // llegar a arrancar el decodificador de audio de verdad. El audio de la
+  // sala general siempre paso por un <video> real (ver createVideoTile);
+  // la llamada nunca lo hizo, solo armaba un MediaStream suelto para Web
+  // Audio. Se muted=true para no depender de que el navegador deje
+  // reproducir CON sonido (mas estricto que silenciado) -- eso no impide
+  // que decodifique de verdad, solo que se escuche por si solo: el sonido
+  // real sigue saliendo por Web Audio, mismo patron que ya usa la sala.
+  if (!callRemoteAudioEl) {
+    callRemoteAudioEl = document.createElement("audio");
+    callRemoteAudioEl.autoplay = true;
+    callRemoteAudioEl.muted = true;
+    callRemoteAudioEl.style.display = "none";
+    document.body.appendChild(callRemoteAudioEl);
+  }
+  callRemoteAudioEl.srcObject = remoteStream;
+  callRemoteAudioEl.play().catch(() => {});
+  const source = ctx.createMediaStreamSource(remoteStream);
   callGainNode = ctx.createGain();
   callGainNode.gain.value = Number(els.callVolume.value);
   source.connect(callGainNode).connect(ctx.destination);
