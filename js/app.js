@@ -1525,7 +1525,13 @@ function measureLocalMicLevel(stream, etiqueta) {
   } catch {}
   debugLog(`[MIC-LOCAL:${etiqueta}] settings=${JSON.stringify(settings)} enabled=${track.enabled} muted=${track.muted} readyState=${track.readyState}`);
   const ctx = getSharedAudioContext();
-  const source = ctx.createMediaStreamSource(new MediaStream([track]));
+  // Se mide sobre un CLON, nunca sobre el track original que se manda por
+  // la llamada: confirmado con un caso real que Safari/iOS viejo puede
+  // dejar sin datos reales al envio de WebRTC si el MISMO track ya esta
+  // enganchado a otro consumidor (como este analizador) al mismo tiempo --
+  // asi, medir ya no puede ser la causa de que el otro lado reciba silencio.
+  const measureTrack = track.clone();
+  const source = ctx.createMediaStreamSource(new MediaStream([measureTrack]));
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
   source.connect(analyser); // sin llegar a ctx.destination: se mide sin reproducirlo (evita eco)
@@ -1534,6 +1540,7 @@ function measureLocalMicLevel(stream, etiqueta) {
   const interval = setInterval(() => {
     if (track.readyState === "ended") {
       clearInterval(interval);
+      measureTrack.stop();
       return;
     }
     analyser.getByteFrequencyData(data);
@@ -1541,7 +1548,10 @@ function measureLocalMicLevel(stream, etiqueta) {
     const max = Math.max(...data);
     debugLog(`[MIC-LOCAL:${etiqueta}] nivel propio antes de mandarlo: promedio=${avg.toFixed(1)} pico=${max} enabled=${track.enabled} muted=${track.muted}`);
     ticks++;
-    if (ticks >= 15) clearInterval(interval);
+    if (ticks >= 15) {
+      clearInterval(interval);
+      measureTrack.stop();
+    }
   }, 1000);
 }
 
