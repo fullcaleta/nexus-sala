@@ -11,7 +11,7 @@
 // este modulo no necesita saber quien es moderador para nada: si el
 // servidor le manda un producer, es porque ya lo autorizo.
 import { Device } from "./vendor/mediasoup-client.js";
-import { sendSfuRequest, on as onRealtime } from "./realtime.js?v=7";
+import { sendSfuRequest, on as onRealtime } from "./realtime.js?v=8";
 
 // Mismo vocabulario fijo que server/sfu.js -- estos tres son streams "extra"
 // (camara real durante screen-share, audio/video de una llamada privada),

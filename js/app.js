@@ -16,9 +16,9 @@ import {
   kickUser,
   disconnect,
   fetchTurnCredentials,
-} from "./realtime.js?v=7";
-import { createWebRTCManager } from "./webrtc.js?v=17";
-import { createSfuManager } from "./sfu.js?v=7";
+} from "./realtime.js?v=8";
+import { createWebRTCManager } from "./webrtc.js?v=18";
+import { createSfuManager } from "./sfu.js?v=8";
 
 // STUN no necesita credenciales; TURN sí, y esas se piden frescas al
 // servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)

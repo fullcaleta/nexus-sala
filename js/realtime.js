@@ -28,9 +28,14 @@ let UPLOAD_BASE_URL = uploadBaseFor(SERVER_URL);
 // "reflejar" la conexion hacia su propia IP publica. No es cosa nuestra,
 // pero como suele ser intermitente (a veces conecta, a veces no), reintentar
 // unas pocas veces antes de rendirse soluciona la mayoria de los casos.
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 6;
 const RETRY_DELAY_MS = 1200;
-const CONNECT_TIMEOUT_MS = 5000;
+// Antes 5s: muy corto para una red movil lenta/congestionada, donde el
+// handshake TLS+WebSocket puede tardar mas sin que la conexion este
+// realmente bloqueada -- confirmado con un caso real donde la misma persona,
+// mismo operador, a veces entraba y a veces no segun la zona de la ciudad
+// (consistente con señal variable, no con un bloqueo).
+const CONNECT_TIMEOUT_MS = 12000;
 
 let ws = null;
 // Prueba, del lado del servidor, que quien sube un archivo por HTTP ya esta
