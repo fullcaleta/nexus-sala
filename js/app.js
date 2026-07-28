@@ -16,7 +16,7 @@ import {
   kickUser,
   disconnect,
 } from "./realtime.js?v=9";
-import { createSfuManager } from "./sfu.js?v=13";
+import { createSfuManager } from "./sfu.js?v=14";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 

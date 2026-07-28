@@ -172,9 +172,51 @@ export function createSfuManager({
               .join(" ");
             log(`[CALL-TX-STATS] ${campos}`);
           }
+          if (r.type === "outbound-rtp" && r.kind === "audio" && r.codecId) {
+            const codec = stats.get(r.codecId);
+            if (codec) log(`[CALL-TX-CODEC] mimeType=${codec.mimeType} payloadType=${codec.payloadType} clockRate=${codec.clockRate} channels=${codec.channels} sdpFmtpLine=${codec.sdpFmtpLine}`);
+          }
         });
       } catch (err) {
         log(`[CALL-TX-STATS] error leyendo stats: ${err.message}`);
+      }
+    }, 1000);
+  }
+
+  // Mismo diagnostico que pollProducerStats, pero del lado que RECIBE mi
+  // propia llamada (nunca del moderador supervisando la de otro): packets
+  // recibidos/perdidos y el codec real negociado -- si el codec no
+  // coincide con el que uso quien manda (ver CALL-TX-CODEC), eso explicaria
+  // paquetes que llegan pero se decodifican en silencio.
+  function pollConsumerStats(peerId, consumer) {
+    let secs = 0;
+    const iv = setInterval(async () => {
+      if (consumer.closed) {
+        clearInterval(iv);
+        return;
+      }
+      secs++;
+      if (secs > 20) {
+        clearInterval(iv);
+        return;
+      }
+      try {
+        const stats = await consumer.getStats();
+        stats.forEach((r) => {
+          if (r.type === "inbound-rtp" && r.kind === "audio") {
+            const campos = ["packetsReceived", "packetsLost", "bytesReceived", "jitter", "audioLevel", "totalAudioEnergy", "concealedSamples"]
+              .filter((k) => r[k] !== undefined)
+              .map((k) => `${k}=${typeof r[k] === "number" ? r[k].toFixed(4) : r[k]}`)
+              .join(" ");
+            log(`[CALL-RX-STATS] con ${peerId}: ${campos}`);
+            if (r.codecId) {
+              const codec = stats.get(r.codecId);
+              if (codec) log(`[CALL-RX-CODEC] con ${peerId}: mimeType=${codec.mimeType} payloadType=${codec.payloadType} clockRate=${codec.clockRate} channels=${codec.channels} sdpFmtpLine=${codec.sdpFmtpLine}`);
+            }
+          }
+        });
+      } catch (err) {
+        log(`[CALL-RX-STATS] error leyendo stats: ${err.message}`);
       }
     }, 1000);
   }
@@ -254,8 +296,12 @@ export function createSfuManager({
     consumers.set(consumer.id, { consumer, ownerUserId, role, isMyCall });
 
     if (MOD_ONLY_ROLES.has(role)) {
-      if (isMyCall) onCallStream?.(ownerUserId, consumer.track);
-      else onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track, role);
+      if (isMyCall) {
+        onCallStream?.(ownerUserId, consumer.track);
+        if (role === "callAudio") pollConsumerStats(ownerUserId, consumer);
+      } else {
+        onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track, role);
+      }
       return;
     }
     let stream = remoteStreams.get(ownerUserId);
