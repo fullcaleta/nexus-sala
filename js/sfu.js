@@ -1,9 +1,11 @@
-// Manejo de mediasoup-client del lado del navegador para el video/audio de
-// la sala general (SFU): cada usuario manda su camara/mic UNA vez a este
-// modulo, que los manda al servidor; recibe a cambio los "producers" de los
-// demas y los reproduce. Reemplaza al mesh que vivia en webrtc.js -- ver
-// ese archivo para la llamada privada 1 a 1, que sigue siendo mesh directo
-// y no pasa por aca.
+// Manejo de mediasoup-client del lado del navegador: cada usuario manda su
+// camara/mic UNA vez a este modulo, que los manda al servidor; recibe a
+// cambio los "producers" de los demas y los reproduce. Tambien maneja el
+// audio/video de las llamadas privadas 1 a 1 (roles callAudio/callVideo,
+// ver sendCallAudio/sendCallVideo mas abajo): antes viajaban por una
+// conexion directa aparte (js/webrtc.js), pero un problema irreparable de
+// Safari/iOS viejo con esa conexion directa (confirmado con pruebas reales)
+// hizo que se migraran a este mismo camino, ya probado y confiable.
 //
 // El servidor (ver server/sfu.js) es quien decide quien puede ver que --
 // este modulo no necesita saber quien es moderador para nada: si el
@@ -11,9 +13,12 @@
 import { Device } from "./vendor/mediasoup-client.js";
 import { sendSfuRequest, on as onRealtime } from "./realtime.js?v=6";
 
-// Mismo vocabulario fijo que server/sfu.js -- estos tres son streams
-// "extra" (camara real durante screen-share, supervision de llamada
-// privada), nunca el video/audio normal de alguien.
+// Mismo vocabulario fijo que server/sfu.js -- estos tres son streams "extra"
+// (camara real durante screen-share, audio/video de una llamada privada),
+// nunca el video/audio normal de alguien en la sala general. callAudio y
+// callVideo son especiales dentro de este grupo: ademas de los moderadores,
+// tambien los puede consumir un destinatario puntual (ver targetUserId en
+// produceTrack/consumeProducer).
 const MOD_ONLY_ROLES = new Set(["modCamera", "callAudio", "callVideo"]);
 
 export function createSfuManager({
@@ -23,6 +28,8 @@ export function createSfuManager({
   onRemoveStream,
   onModeratorExtraStream,
   onModeratorExtraStreamEnded,
+  onCallStream,
+  onCallStreamEnded,
 }) {
   let device = null;
   let sendTransport = null;
@@ -77,7 +84,13 @@ export function createSfuManager({
           sendSfuRequest("sfu-connect-transport", { transportId: t.id, dtlsParameters }).then(callback).catch(errback);
         });
         t.on("produce", ({ kind, rtpParameters, appData }, callback, errback) => {
-          sendSfuRequest("sfu-produce", { transportId: t.id, kind, rtpParameters, role: appData.role })
+          sendSfuRequest("sfu-produce", {
+            transportId: t.id,
+            kind,
+            rtpParameters,
+            role: appData.role,
+            targetUserId: appData.targetUserId,
+          })
             .then(({ producerId }) => callback({ id: producerId }))
             .catch(errback);
         });
@@ -113,19 +126,21 @@ export function createSfuManager({
 
   // "role" identifica QUE es el track para el servidor (ver ROLES en
   // server/sfu.js) -- nunca se manda un permiso, solo una etiqueta fija.
-  async function produceTrack(role, track) {
+  // targetUserId solo tiene sentido para callAudio/callVideo (ver
+  // sendCallAudio/sendCallVideo mas abajo).
+  async function produceTrack(role, track, targetUserId) {
     await ensureSendTransport();
-    const producer = await sendTransport.produce({ track, appData: { role } });
+    const producer = await sendTransport.produce({ track, appData: { role, targetUserId } });
     producers.set(role, producer);
     return producer;
   }
 
   // Cambiar de camara, o pasar de camara a pantalla compartida y volver:
   // mismo track "role", solo cambia que va adentro, sin renegociar.
-  async function replaceProducerTrack(role, newTrack) {
+  async function replaceProducerTrack(role, newTrack, targetUserId) {
     const producer = producers.get(role);
     if (!producer) {
-      await produceTrack(role, newTrack);
+      await produceTrack(role, newTrack, targetUserId);
       return;
     }
     await producer.replaceTrack({ track: newTrack });
@@ -173,7 +188,7 @@ export function createSfuManager({
     else onRemoveStream?.(ownerUserId);
   }
 
-  async function consumeProducer({ producerId, kind, role, ownerUserId, ownerName, muted = false }) {
+  async function consumeProducer({ producerId, kind, role, ownerUserId, ownerName, muted = false, targetUserId }) {
     await ensureDevice();
     await ensureRecvTransport();
     // El servidor ya crea el consumer en el estado correcto (pausado solo
@@ -186,10 +201,17 @@ export function createSfuManager({
       rtpCapabilities: device.rtpCapabilities,
     });
     const consumer = await recvTransport.consume({ id, producerId, kind, rtpParameters });
-    consumers.set(consumer.id, { consumer, ownerUserId, role });
+    // isMyCall: distingue, para un producer callAudio/callVideo, si LO
+    // ESTOY CONSUMIENDO PORQUE SOY EL DESTINATARIO REAL de la llamada (mi
+    // propia llamada) o porque soy un moderador supervisando la llamada de
+    // otra persona -- decide a que callback avisar, tanto ahora como al
+    // limpiar (ver el handler de "sfu-producer-closed" mas abajo).
+    const isMyCall = MOD_ONLY_ROLES.has(role) && targetUserId === userId;
+    consumers.set(consumer.id, { consumer, ownerUserId, role, isMyCall });
 
     if (MOD_ONLY_ROLES.has(role)) {
-      onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track);
+      if (isMyCall) onCallStream?.(ownerUserId, consumer.track);
+      else onModeratorExtraStream?.(ownerUserId, new MediaStream([consumer.track]), consumer.track);
       return;
     }
     let stream = remoteStreams.get(ownerUserId);
@@ -227,7 +249,8 @@ export function createSfuManager({
       // limpieza de estos streams extra no puede depender de escuchar
       // "ended" en el propio track, hace falta avisar directo aca.
       if (MOD_ONLY_ROLES.has(entry.role)) {
-        onModeratorExtraStreamEnded?.(entry.ownerUserId, entry.role);
+        if (entry.isMyCall) onCallStreamEnded?.(entry.ownerUserId, entry.role);
+        else onModeratorExtraStreamEnded?.(entry.ownerUserId, entry.role);
       } else {
         markRoleInactive(entry.ownerUserId, entry.role);
         // Sacar el track muerto del MediaStream compartido de esta persona
@@ -283,8 +306,13 @@ export function createSfuManager({
     stopProducer,
     sendCameraToModerators: (track) => produceTrack("modCamera", track),
     stopCameraToModerators: () => stopProducer("modCamera"),
-    sendCallTrackToModerators: (kind, track) => produceTrack(kind === "audio" ? "callAudio" : "callVideo", track),
-    stopCallTrackToModerators: (kind) => stopProducer(kind === "audio" ? "callAudio" : "callVideo"),
+    // Audio/video de una llamada privada 1 a 1: un solo producer, visible
+    // para el destinatario real de la llamada Y para cualquier moderador
+    // que la este supervisando (ver targetUserId en server/sfu.js).
+    sendCallAudio: (targetUserId, track) => produceTrack("callAudio", track, targetUserId),
+    sendCallVideo: (targetUserId, track) => produceTrack("callVideo", track, targetUserId),
+    stopCallAudio: () => stopProducer("callAudio"),
+    stopCallVideo: () => stopProducer("callVideo"),
     getExistingProducers,
     destroy,
   };

@@ -15,34 +15,8 @@ import {
   sendCallHangup,
   kickUser,
   disconnect,
-  fetchTurnCredentials,
 } from "./realtime.js?v=6";
-import { createWebRTCManager } from "./webrtc.js?v=14";
-import { createSfuManager } from "./sfu.js?v=5";
-
-// STUN no necesita credenciales; TURN sí, y esas se piden frescas al
-// servidor apenas se entra a la sala (ver fetchTurnCredentials mas abajo)
-// en vez de tenerlas escritas fijas en este archivo publico.
-// Puerto 3479 (era el original, 3478) porque el nuevo servidor (laptop
-// Kali) ya tenia otro programa (AgentDVR, camaras de seguridad) usando
-// varios puertos seguidos a partir del 3478 -- se corrio a un puerto lejos
-// de ese rango para no chocar. Ver TURN_PORT en docker/.env.production.
-async function buildIceServers() {
-  const stun = { urls: "stun:nexus-sala.duckdns.org:33478" };
-  try {
-    const { username, credential } = await fetchTurnCredentials();
-    return {
-      iceServers: [
-        stun,
-        { urls: "turn:nexus-sala.duckdns.org:33478", username, credential },
-        { urls: "turn:nexus-sala.duckdns.org:33478?transport=tcp", username, credential },
-      ],
-    };
-  } catch (err) {
-    console.warn("[NEXUS] no se pudieron obtener credenciales TURN, sigo solo con STUN:", err.message);
-    return { iceServers: [stun] };
-  }
-}
+import { createSfuManager } from "./sfu.js?v=6";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
 
@@ -210,8 +184,7 @@ function stopCallRingtone() {
 }
 
 let localStream = null; // MediaStream mutable: arranca vacio, se le suman tracks al activarlos
-let webrtcManager = null; // solo llamada privada 1 a 1 (ver webrtc.js)
-let sfuManager = null; // video/audio normal de la sala, via el SFU (ver sfu.js)
+let sfuManager = null; // camara/mic de la sala Y audio/video de llamadas privadas, via el SFU (ver sfu.js)
 let micOn = false;
 let camOn = false;
 let facingMode = "user";
@@ -241,10 +214,9 @@ let callPeerId = null;
 let callPeerName = "";
 let callLocalStream = null; // microfono (+ camara si se prende) de la llamada activa
 let callVideoOn = false;
-let callAudioCloneForMod = null; // copia independiente que recibe el moderador, ver startOutgoingCall/acceptIncomingCall
-let audioSilentReported = false; // ver monitorCallAudioLevel: solo se pide un refresco de mic por llamada
+let callMuted = false; // estado del boton de mutear LA LLAMADA (el track real nunca se apaga, ver setMute en sfu.js)
 let callRingTimeout = null;
-const callRemoteTracks = new Set(); // ver handleCallTrack: se reconstruye la stream entera cada vez
+const callRemoteTracks = new Set(); // ver handleCallStream: se reconstruye la stream entera cada vez
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -791,18 +763,10 @@ async function joinRoom() {
   updateMicButtonUI();
   updateCamButtonUI();
 
-  const iceServers = await buildIceServers();
-  // Llamada privada 1 a 1 (sin cambios, sigue siendo conexion directa).
-  webrtcManager = createWebRTCManager({
-    userId,
-    iceServers,
-    onCallTrack: handleCallTrack,
-    onCallEnded: handleCallEnded,
-    onAudioSilentRequest: handleAudioSilentRequest,
-  });
-  // Video/audio normal de la sala: pasa por el SFU (server/sfu.js). El
-  // servidor es quien decide que le llega a cada quien -- no hace falta
-  // pasarle "isModeratorPeer" como antes, ya no es el cliente el que decide.
+  // Video/audio normal de la sala, Y audio/video de las llamadas privadas
+  // 1 a 1: todo pasa por el SFU (server/sfu.js). El servidor es quien
+  // decide que le llega a cada quien -- no hace falta pasarle
+  // "isModeratorPeer" como antes, ya no es el cliente el que decide.
   sfuManager = createSfuManager({
     userId,
     // El moderador siempre ve el recuadro de todos, aunque esten
@@ -834,7 +798,7 @@ async function joinRoom() {
     // Solo le llega algo a esto si yo soy moderador: o bien la camara real
     // de alguien que esta compartiendo pantalla (ver sendCameraToModerators
     // en sfu.js), o bien el audio/video de una llamada privada ajena que
-    // estoy supervisando (ver sendCallTrackToModerators).
+    // estoy supervisando (ver sendCallAudio/sendCallVideo en sfu.js).
     onModeratorExtraStream: (peerId, stream, track) => {
       const info = knownMembers.get(peerId);
       if (track.kind === "audio") {
@@ -853,6 +817,42 @@ async function joinRoom() {
       const video = createVideoTile(`${peerId}-modcam`, `${info?.name || "Usuario"} (cámara real)`);
       video.srcObject = stream;
       video._connectVolumeControl?.();
+    },
+    // Mi propia llamada privada (soy el destinatario real de ese producer,
+    // no un moderador supervisando la llamada de otra persona -- ver
+    // isMyCall en sfu.js). Antes esto llegaba por una conexion directa
+    // punto a punto aparte (webrtc.js); un problema irreparable de Safari
+    // viejo con esa conexion (confirmado con pruebas reales) hizo que se
+    // migrara al mismo SFU que ya usa la sala general, comprobado confiable.
+    onCallStream: (peerId, track) => {
+      if (peerId !== callPeerId || callState !== "active") return;
+      if (track.kind === "audio") {
+        connectCallAudio(track);
+        return;
+      }
+      // Video: se muestra en el <video>, que arranca mudo -- el audio real
+      // sale por Web Audio (ver connectCallAudio), asi que el autoplay
+      // silenciado del navegador no tiene restricciones.
+      callRemoteTracks.add(track);
+      els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
+      els.callRemoteVideo.play().catch(() => {});
+      track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
+      track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
+    },
+    // Un producer de MI llamada se cerro de verdad (mismo motivo que
+    // onModeratorExtraStreamEnded: el evento "ended" del track no sirve
+    // aca). Si es "callAudio" la llamada termino de verdad (colgaron, o se
+    // cortó la conexion de esa persona); si es "callVideo" el otro lado
+    // solo apago su camara, la llamada sigue.
+    onCallStreamEnded: (peerId, role) => {
+      if (peerId !== callPeerId) return;
+      if (role === "callAudio") {
+        handleCallEnded(peerId);
+        return;
+      }
+      callRemoteTracks.clear();
+      els.callRemoteVideo.srcObject = null;
+      els.callPanel.classList.remove("has-remote-video");
     },
   });
   // Pone al dia sobre quien ya estaba mandando camara/mic antes de entrar
@@ -991,14 +991,7 @@ async function joinRoom() {
       return;
     }
     callState = "active";
-    webrtcManager.startCallOffer(callPeerId, callLocalStream);
-    // Clon de verdad (no la misma referencia): "enabled" es una propiedad
-    // POR TRACK, asi que si se mandara el mismo track de arriba, mutear la
-    // llamada (mas abajo, con track.enabled = false) tambien apagaba esta
-    // copia -- justo lo que se queria evitar (que el moderador siga
-    // escuchando aunque la llamada este silenciada).
-    callAudioCloneForMod = callLocalStream.getAudioTracks()[0].clone();
-    sfuManager.sendCallTrackToModerators("audio", callAudioCloneForMod);
+    await sfuManager.sendCallAudio(callPeerId, callLocalStream.getAudioTracks()[0]);
     showCallPanel();
   });
 
@@ -1026,7 +1019,6 @@ function cleanupAndReturnToJoinScreen() {
   for (const unsubscribe of roomListeners) unsubscribe();
   roomListeners.length = 0;
   resetCallState();
-  if (webrtcManager) webrtcManager.destroy();
   if (sfuManager) sfuManager.destroy();
   if (localStream) localStream.getTracks().forEach((t) => t.stop());
   // si se salio de la sala mientras se compartia pantalla, tanto el
@@ -1264,17 +1256,10 @@ function resetCallState() {
     callRingTimeout = null;
   }
   try {
-    if (callPeerId) {
-      webrtcManager?.endCall(callPeerId);
-      sfuManager?.stopCallTrackToModerators("audio");
-      sfuManager?.stopCallTrackToModerators("video");
-    }
+    sfuManager?.stopCallAudio();
+    sfuManager?.stopCallVideo();
   } catch (err) {
     console.warn("[NEXUS-CALL] error limpiando la conexion de la llamada:", err);
-  }
-  if (callAudioCloneForMod) {
-    callAudioCloneForMod.stop();
-    callAudioCloneForMod = null;
   }
   try {
     stopCallLocalStream();
@@ -1286,7 +1271,7 @@ function resetCallState() {
   callPeerId = null;
   callPeerName = "";
   callVideoOn = false;
-  audioSilentReported = false;
+  callMuted = false;
   els.callSwitchCamBtn.classList.add("hidden");
   callRemoteTracks.clear();
   if (callGainNode) {
@@ -1364,17 +1349,9 @@ async function acceptIncomingCall() {
     alert("No se pudo acceder al micrófono para atender la llamada.");
     return;
   }
-  // Se prepara la conexion (con el microfono ya en mano) ANTES de avisar
-  // que se acepta: asi, cuando la oferta de quien llama llegue, este lado
-  // ya esta listo para responderla en el momento, sin carreras de tiempo.
-  webrtcManager.prepareCallReceiver(peerId, callLocalStream);
   sendCallAccept(peerId);
   callState = "active";
-  // Ver el mismo comentario en startOutgoingCall: tiene que ser un clon de
-  // verdad, no la misma referencia, para que mutear la llamada no apague
-  // tambien lo que recibe el moderador.
-  callAudioCloneForMod = callLocalStream.getAudioTracks()[0].clone();
-  sfuManager.sendCallTrackToModerators("audio", callAudioCloneForMod);
+  await sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
   openDmWith(peerId, callPeerName);
   showCallPanel();
 }
@@ -1385,133 +1362,21 @@ function hangupActiveCall() {
   resetCallState();
 }
 
-function handleCallTrack(peerId, stream, track) {
-  if (peerId !== callPeerId || callState !== "active") {
-    console.warn(
-      `[NEXUS-CALL-DEBUG] track de ${peerId} ignorado: callPeerId=${callPeerId}, callState=${callState}`
-    );
-    return;
-  }
-  console.log(`[NEXUS-CALL] track recibido de ${peerId}: ${track.kind}`);
-  if (track.kind === "audio") {
-    connectCallAudio(track, peerId);
-    return;
-  }
-  // Video: se muestra en el <video>, que arranca mudo -- el audio real sale
-  // por Web Audio (ver connectCallAudio), asi que el autoplay silenciado
-  // del navegador no tiene restricciones. El intento explicito de play()
-  // es solo un empujon extra por si algun navegador no arranca solo con el
-  // atributo autoplay; se ignora en silencio si falla, sin mostrar nada
-  // (la renegociacion agregada en setCallVideoTrack ya evita que haga
-  // falta un boton manual).
-  callRemoteTracks.add(track);
-  els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
-  els.callRemoteVideo.play().catch(() => {});
-  track.addEventListener("unmute", () => els.callPanel.classList.add("has-remote-video"));
-  track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
-}
-
 // Mismo truco que ya usa el resto de la app para el audio de la sala (ver
 // _connectVolumeControl en createVideoTile): el audio real de la llamada
 // sale por Web Audio API, con el mismo AudioContext ya "desbloqueado" al
 // entrar a la sala (ver getSharedAudioContext), en vez de depender de que
-// el navegador deje reproducir audio con sonido en un <video> -- eso era
-// justo lo que fallaba de un lado si o si: los navegadores son mucho mas
-// estrictos bloqueando autoplay CON sonido que autoplay silenciado.
+// el navegador deje reproducir audio con sonido en un <video> -- los
+// navegadores son mucho mas estrictos bloqueando autoplay CON sonido que
+// autoplay silenciado.
 let callGainNode = null;
-function connectCallAudio(track, peerId) {
+function connectCallAudio(track) {
   if (callGainNode) return; // ya conectado
   const ctx = getSharedAudioContext();
-  console.log(`[NEXUS-CALL] AudioContext estado=${ctx.state}`);
   const source = ctx.createMediaStreamSource(new MediaStream([track]));
   callGainNode = ctx.createGain();
   callGainNode.gain.value = Number(els.callVolume.value);
   source.connect(callGainNode).connect(ctx.destination);
-  console.log("[NEXUS-CALL] audio de la llamada conectado por Web Audio");
-  track.addEventListener("unmute", () => console.log("[NEXUS-CALL] track de audio de la llamada YA trae datos reales (unmute)"));
-  track.addEventListener("mute", () => console.log("[NEXUS-CALL] track de audio de la llamada DEJO de traer datos (mute)"));
-  monitorCallAudioLevel(ctx, source, peerId);
-}
-
-// Mide el volumen real del audio recibido (no solo si llegan paquetes: si
-// esos paquetes tienen sonido de verdad o son silencio). Se loguea cada
-// segundo durante 10 segundos y se corta sola. Si en NINGUNO de esos 10
-// segundos hubo ni un poquito de sonido, es la señal de un problema
-// conocido de Safari/iOS viejo (iPhone 7 confirmado): el track llega
-// "vivo" a nivel de WebRTC (ICE conectado, dispara "unmute") pero lo que
-// manda es silencio de verdad -- se le avisa al otro lado para que intente
-// refrescar su microfono (ver notifyAudioSilent/setCallAudioTrack en
-// webrtc.js). Solo se pide una vez por llamada (ver audioSilentReported en
-// resetCallState) para no insistir en bucle si el refresco no alcanza.
-function monitorCallAudioLevel(ctx, source, peerId) {
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 512;
-  source.connect(analyser);
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  let ticks = 0;
-  let everHeardSomething = false;
-  const interval = setInterval(() => {
-    if (callState !== "active") {
-      clearInterval(interval);
-      return;
-    }
-    analyser.getByteFrequencyData(data);
-    const avg = data.reduce((a, b) => a + b, 0) / data.length;
-    const max = Math.max(...data);
-    console.log(`[NEXUS-CALL-NIVEL] volumen recibido: promedio=${avg.toFixed(1)} pico=${max}`);
-    if (avg > 0 || max > 0) everHeardSomething = true;
-    ticks++;
-    if (ticks >= 10) {
-      clearInterval(interval);
-      if (!everHeardSomething && !audioSilentReported && callState === "active" && peerId === callPeerId) {
-        audioSilentReported = true;
-        console.warn("[NEXUS-CALL] 10s sin nada de audio real -- avisando al otro lado para que refresque su microfono");
-        webrtcManager?.notifyAudioSilent(peerId);
-      }
-    }
-  }, 1000);
-}
-
-// El otro lado de la llamada avisa (ver notifyAudioSilent en webrtc.js) que
-// no le esta llegando audio real del propio microfono, aunque a nivel de
-// WebRTC el track se vea "vivo" -- en vez de pedirle a la persona que
-// cuelgue y vuelva a llamar, se pide un microfono nuevo de cero Y se
-// reinicia la conexion de la llamada entera (ver restartCallConnection en
-// webrtc.js). Antes esto solo reemplazaba el track y renegociaba
-// (setCallVideoTrack, sin recrear la conexion), pero confirmado con logs
-// reales que no alcanzaba -- el sender de audio seguia mandando silencio
-// sin importar que track se le pusiera. No se toca la copia que recibe el
-// moderador (ver callAudioCloneForMod): esa viaja por el SFU, no por esta
-// conexion directa, y ya funciona bien.
-//
-// Se probo tambien dispararlo PROACTIVAMENTE (sin esperar el aviso) a los
-// pocos segundos de conectar, para no tener que esperar los 10s del
-// diagnostico -- pero como los dos lados de la llamada lo disparaban casi
-// al mismo tiempo, terminaba en dos renegociaciones chocando entre si
-// ("glare") y dejaba la llamada peor que antes (los dos lados mudos, en vez
-// de solo uno). Se saco esa parte: por ahora solo se dispara cuando el otro
-// lado efectivamente avisa, nunca los dos a la vez sin necesidad.
-async function handleAudioSilentRequest(peerId) {
-  if (peerId !== callPeerId || callState !== "active" || !callLocalStream) return;
-  const oldTrack = callLocalStream.getAudioTracks()[0];
-  if (!oldTrack) return;
-  const wasEnabled = oldTrack.enabled; // respeta si la llamada ya estaba muteada
-  try {
-    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const newTrack = micStream.getAudioTracks()[0];
-    newTrack.enabled = wasEnabled;
-    callLocalStream.removeTrack(oldTrack);
-    oldTrack.stop();
-    callLocalStream.addTrack(newTrack);
-    webrtcManager.restartCallConnection(callPeerId, callLocalStream);
-    if (callVideoOn) {
-      const videoTrack = callLocalStream.getVideoTracks()[0];
-      if (videoTrack) webrtcManager.setCallVideoTrack(callPeerId, videoTrack);
-    }
-    console.log("[NEXUS-CALL] microfono y conexion de la llamada refrescados");
-  } catch (err) {
-    console.warn("[NEXUS-CALL] no se pudo refrescar el microfono de la llamada:", err);
-  }
 }
 
 function handleCallEnded(peerId) {
@@ -1525,19 +1390,17 @@ els.callRejectBtn.addEventListener("click", rejectIncomingCall);
 els.callAcceptBtn.addEventListener("click", acceptIncomingCall);
 els.callHangupBtn.addEventListener("click", hangupActiveCall);
 
-// Silenciar en la llamada apaga el track de verdad (no un clon), asi que
-// tambien deja de sonar para el otro lado. La copia que recibe el
-// moderador (ver sendCallTrackToModerators) es un CLON tomado al empezar
-// la llamada, que no se apaga junto con este: es intencional, para
-// sostener la misma transparencia que ya existe con el microfono de la
-// sala general (el mod sigue escuchando aunque el usuario se silencie).
+// Silenciar en la llamada usa el mismo mecanismo real que el microfono de
+// la sala general (consumer.pause() del lado del servidor, ver setMute en
+// server/sfu.js) -- el track real nunca se apaga, asi que el moderador
+// sigue escuchando siempre, con la misma transparencia que ya existe con
+// el microfono de la sala.
 els.callMuteBtn.addEventListener("click", () => {
-  if (callState !== "active" || !callLocalStream) return;
-  const track = callLocalStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled;
-  els.callMuteBtn.classList.toggle("muted", !track.enabled);
-  els.callMuteBtn.textContent = track.enabled ? "🎤" : "🔇";
+  if (callState !== "active") return;
+  callMuted = !callMuted;
+  sfuManager.setMute("callAudio", callMuted);
+  els.callMuteBtn.classList.toggle("muted", callMuted);
+  els.callMuteBtn.textContent = callMuted ? "🔇" : "🎤";
 });
 
 // Volumen de lo que se escucha de la llamada (no del propio microfono):
@@ -1551,8 +1414,7 @@ els.callVolume.addEventListener("input", () => {
 els.callCameraBtn.addEventListener("click", async () => {
   if (callState !== "active") return;
   if (callVideoOn) {
-    webrtcManager.setCallVideoTrack(callPeerId, null);
-    sfuManager.stopCallTrackToModerators("video");
+    sfuManager.stopCallVideo();
     callLocalStream.getVideoTracks().forEach((t) => {
       callLocalStream.removeTrack(t);
       t.stop();
@@ -1564,29 +1426,38 @@ els.callCameraBtn.addEventListener("click", async () => {
     els.callSwitchCamBtn.classList.add("hidden");
     return;
   }
+  let camStream;
   try {
-    const camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-    const camTrack = camStream.getVideoTracks()[0];
-    callLocalStream.addTrack(camTrack);
-    webrtcManager.setCallVideoTrack(callPeerId, camTrack);
-    sfuManager.sendCallTrackToModerators("video", camTrack);
-    els.callLocalVideo.srcObject = new MediaStream([camTrack]);
-    els.callLocalVideo.classList.remove("hidden");
-    els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
-    callVideoOn = true;
-    els.callCameraBtn.classList.add("active");
-    els.callSwitchCamBtn.classList.remove("hidden");
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
   } catch (err) {
     alert("No se pudo activar la cámara.");
+    return;
   }
+  const camTrack = camStream.getVideoTracks()[0];
+  try {
+    await sfuManager.sendCallVideo(callPeerId, camTrack);
+  } catch (err) {
+    // el servidor rechazo el pedido -- se deshace la captura local para no
+    // dejar la camara prendida sin que nadie la vea (mismo criterio que
+    // toggleCamBtn con la camara de la sala).
+    camTrack.stop();
+    alert(err.message || "No se pudo activar la cámara.");
+    return;
+  }
+  callLocalStream.addTrack(camTrack);
+  els.callLocalVideo.srcObject = new MediaStream([camTrack]);
+  els.callLocalVideo.classList.remove("hidden");
+  els.callLocalVideo.classList.toggle("mirrored", (camTrack.getSettings().facingMode || "user") === "user");
+  callVideoOn = true;
+  els.callCameraBtn.classList.add("active");
+  els.callSwitchCamBtn.classList.remove("hidden");
 });
 
 // Cambia de camara durante una llamada privada ya en curso, igual que el
 // boton equivalente sobre la propia vista previa de la sala (switchCamera):
 // misma logica de "probar otro dispositivo, si no hay usar facingMode como
-// plan B", pero aplicada al track de la llamada (via setCallVideoTrack) y
-// a la copia que ve el moderador (via stop+send, no hay "replace" para esas
-// copias extra), en vez de al track que se manda a la sala general.
+// plan B", aplicada al producer "callVideo" (reemplaza el track sin
+// renegociar nada, mediasoup ya lo maneja solo).
 async function switchCallCamera() {
   if (callState !== "active" || !callVideoOn || !callLocalStream) return;
   const oldTrack = callLocalStream.getVideoTracks()[0];
@@ -1616,9 +1487,7 @@ async function switchCallCamera() {
   callLocalStream.removeTrack(oldTrack);
   oldTrack.stop();
   callLocalStream.addTrack(newTrack);
-  webrtcManager.setCallVideoTrack(callPeerId, newTrack);
-  sfuManager.stopCallTrackToModerators("video");
-  sfuManager.sendCallTrackToModerators("video", newTrack);
+  await sfuManager.replaceProducerTrack("callVideo", newTrack, callPeerId);
   els.callLocalVideo.srcObject = new MediaStream([newTrack]);
   // Al pedir "por dispositivo" (deviceId), el track resultante no siempre
   // informa su facingMode real -- por eso el fallback a newFacing (lo que
