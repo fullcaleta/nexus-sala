@@ -1201,6 +1201,20 @@ els.attachFileInput.addEventListener("change", async () => {
 // del video, si se prende) para poder supervisar, igual que ya pasa con el
 // microfono/camara de la sala general.
 
+// Confirmado con un caso real: el iPhone 7 captura audio real (medido con
+// un AnalyserNode aparte) y lo manda (bytesSent/packetsSent creciendo
+// normal), pero el otro lado recibe los paquetes perfectos (packetsLost=0)
+// y los decodifica en energia exactamente 0 -- ni la red, ni el codec, ni
+// nuestro propio diagnostico son la causa. Lo unico que queda sin probar
+// es el procesamiento que Safari le aplica al audio por dentro antes de
+// codificarlo (cancelacion de eco, supresion de ruido, control automatico
+// de volumen, todos activados por default) -- hay bugs conocidos de WebKit
+// viejo donde ese procesamiento deja al envio de WebRTC sin datos reales
+// aunque el track crudo este viem. El mic de la sala nunca tuvo este
+// problema y usa las mismas constraints por default; se prueba desactivar
+// ese procesamiento SOLO para la llamada, a ver si cambia algo.
+const CALL_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+
 function stopCallLocalStream() {
   if (callLocalStream) {
     callLocalStream.getTracks().forEach((t) => t.stop());
@@ -1386,7 +1400,7 @@ async function startOutgoingCall() {
   // en un estado raro (conectado, pero sin mandar sonido de verdad). Pedirlo
   // ya mismo, dentro del propio clic, evita ese riesgo de raiz.
   try {
-    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_CONSTRAINTS });
     // El AudioContext se despierta DESPUES de tener el microfono, no antes
     // (se probo antes, ver historial): un caso real mostro que el iPhone 7
     // capta puro silencio en la llamada (confirmado con alguien hablando
@@ -1432,7 +1446,7 @@ async function acceptIncomingCall() {
   els.callIncomingOverlay.classList.add("hidden");
   stopCallRingtone();
   try {
-    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    callLocalStream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_CONSTRAINTS });
     measureLocalMicLevel(callLocalStream, "atendiendo");
     ensureRoomMicAccess(callLocalStream.getAudioTracks()[0]);
   } catch (err) {
