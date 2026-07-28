@@ -1438,8 +1438,14 @@ async function acceptIncomingCall() {
     alert("No se pudo acceder al micrófono para atender la llamada.");
     return;
   }
-  sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
+  // "call-accept" se manda ANTES de producir el audio: el servidor recien
+  // deja pasar un producer "callAudio"/"callVideo" si ya sabe (por este
+  // mismo aviso) que la llamada esta aceptada de verdad (ver sfu-produce
+  // en server.js) -- mandarlo despues dejaria una ventana donde el pedido
+  // de producir llega antes de que el servidor sepa que la llamada existe,
+  // y lo rechazaria.
   sendCallAccept(peerId);
+  sfuManager.sendCallAudio(peerId, callLocalStream.getAudioTracks()[0]);
   callState = "active";
   flushPendingCallTracks();
   openDmWith(peerId, callPeerName);
