@@ -15,9 +15,7 @@ import {
   sendCallHangup,
   kickUser,
   disconnect,
-  sendMapReport,
-  sendSharePosition,
-} from "./realtime.js?v=10";
+} from "./realtime.js?v=11";
 import { createSfuManager } from "./sfu.js?v=14";
 
 const modKeyFromUrl = new URLSearchParams(window.location.search).get("mod") || "";
@@ -77,15 +75,6 @@ const els = {
   notifyBtn: document.getElementById("notify-btn"),
   chatTabs: document.getElementById("chat-tabs"),
   modAlertBanner: document.getElementById("mod-alert-banner"),
-  openMapBtn: document.getElementById("open-map-btn"),
-  mapPanel: document.getElementById("map-panel"),
-  mapCloseBtn: document.getElementById("map-close-btn"),
-  mapContainer: document.getElementById("map-container"),
-  mapHint: document.getElementById("map-hint"),
-  reportPoliceBtn: document.getElementById("report-police-btn"),
-  reportAccidentBtn: document.getElementById("report-accident-btn"),
-  sharePositionBtn: document.getElementById("share-position-btn"),
-  mapAlertToast: document.getElementById("map-alert-toast"),
 };
 
 // Mismos limites que aplica el servidor (ver MEDIA_LIMITS en server.js):
@@ -889,37 +878,6 @@ async function joinRoom() {
   addRoomListener("gif", (msg) => {
     renderMessage(msg);
     if (msg.userId !== userId) notify(msg.name, "Envió un GIF", "nexus-chat");
-  });
-
-  addRoomListener("map-report", (msg) => {
-    const key = `report-${msg.userId}-${msg.at}`;
-    const emoji = msg.kind === "police" ? "🚨" : "⚠️";
-    const label = msg.kind === "police" ? "policía" : "un accidente";
-    addOrUpdateMapMarker(
-      key,
-      msg.lat,
-      msg.lng,
-      emoji,
-      `<b>${escapeHtml(msg.name)}</b> reportó ${label}<br><a href="${googleMapsLink(msg.lat, msg.lng)}" target="_blank" rel="noopener">Abrir en Google Maps</a>`,
-      false
-    );
-    // Un reporte viejo ya no sirve de nada -- se saca solo del mapa despues
-    // de un rato, en vez de quedar ahi para siempre.
-    setTimeout(() => removeMapMarker(key), 30 * 60 * 1000);
-    showMapAlertToast(msg.kind, msg.name, msg.lat, msg.lng);
-    if (msg.userId !== userId) notify("Nexus", `${msg.name} reportó ${label}`, "nexus-map");
-  });
-
-  addRoomListener("user-position", (msg) => {
-    const label = msg.userId === userId ? "Vos" : escapeHtml(msg.name);
-    addOrUpdateMapMarker(
-      `pos-${msg.userId}`,
-      msg.lat,
-      msg.lng,
-      "📍",
-      `<b>${label}</b><br><a href="${googleMapsLink(msg.lat, msg.lng)}" target="_blank" rel="noopener">Abrir en Google Maps</a>`,
-      false
-    );
   });
 
   // El servidor borra el historial de chat cada 8 minutos: se limpia
@@ -2458,163 +2416,5 @@ els.notifyBtn.addEventListener("click", async () => {
   els.notifyBtn.textContent = notificationsEnabled ? "🔔" : "🔕";
   if (permission === "denied") {
     alert("Bloqueaste las notificaciones para este sitio. Para activarlas, cambiá el permiso desde la configuración del navegador.");
-  }
-});
-
-// --- Mapa: reportar policia/accidente y compartir/ver ubicaciones ---
-// Leaflet + OpenStreetMap (sin clave de API, ver el <link>/<script> en
-// index.html). Nada de esto se guarda en el servidor: son avisos puntuales
-// para quien este conectado en el momento (ver map-report/user-position en
-// server.js), no hay historial ni base de datos de por medio.
-let leafletMap = null;
-const mapMarkers = new Map(); // key -> L.Marker (reportes: "report-<userId>-<at>"; posicion: "pos-<userId>")
-
-function googleMapsLink(lat, lng) {
-  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-}
-
-function mapEmojiIcon(emoji) {
-  return L.divIcon({
-    html: `<div class="map-marker-emoji">${emoji}</div>`,
-    className: "map-marker-icon-wrap",
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor: [0, -15],
-  });
-}
-
-// Si tocan el mapa sin haber pedido reportar nada, no pasa nada -- esto
-// solo hace algo mientras armMapClickReport dejo pendiente que tipo de
-// reporte se esta esperando (ver reportAtCurrentPosition, el respaldo
-// cuando el GPS falla o lo niegan).
-let pendingMapClickKind = null;
-
-function ensureLeafletMap() {
-  if (leafletMap) return leafletMap;
-  leafletMap = L.map(els.mapContainer).setView([20, 0], 2);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
-    maxZoom: 19,
-  }).addTo(leafletMap);
-  leafletMap.on("click", (e) => {
-    if (!pendingMapClickKind) return;
-    const kind = pendingMapClickKind;
-    pendingMapClickKind = null;
-    els.mapHint.textContent = "";
-    sendMapReport(kind, e.latlng.lat, e.latlng.lng);
-  });
-  return leafletMap;
-}
-
-function addOrUpdateMapMarker(key, lat, lng, emoji, popupHtml, panTo) {
-  const map = ensureLeafletMap();
-  const existing = mapMarkers.get(key);
-  if (existing) {
-    existing.setLatLng([lat, lng]);
-    existing.setPopupContent(popupHtml);
-  } else {
-    const marker = L.marker([lat, lng], { icon: mapEmojiIcon(emoji) }).addTo(map);
-    marker.bindPopup(popupHtml);
-    mapMarkers.set(key, marker);
-  }
-  if (panTo) map.setView([lat, lng], Math.max(map.getZoom(), 14));
-}
-
-function removeMapMarker(key) {
-  const existing = mapMarkers.get(key);
-  if (existing) {
-    leafletMap?.removeLayer(existing);
-    mapMarkers.delete(key);
-  }
-}
-
-function getCurrentPositionAsync() {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("sin geolocalizacion"));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-    );
-  });
-}
-
-function armMapClickReport(kind) {
-  pendingMapClickKind = kind;
-  els.mapHint.textContent = "No se pudo usar el GPS: tocá el mapa en el lugar exacto para reportar ahí.";
-}
-
-async function reportAtCurrentPosition(kind) {
-  try {
-    const { lat, lng } = await getCurrentPositionAsync();
-    sendMapReport(kind, lat, lng);
-    els.mapHint.textContent = "";
-  } catch (err) {
-    // Sin GPS (denegado, no disponible, o el navegador no lo soporta): se
-    // deja marcar el lugar a mano en su lugar, para no dejar a nadie sin
-    // poder reportar solo por eso.
-    armMapClickReport(kind);
-  }
-}
-
-// Estilo bonito y bien visible cuando alguien reporta algo -- se ve aunque
-// el mapa este cerrado (ver map-report mas arriba).
-function showMapAlertToast(kind, name, lat, lng) {
-  const emoji = kind === "police" ? "🚨" : "⚠️";
-  const label = kind === "police" ? "reportó policía" : "reportó un accidente";
-  const el = els.mapAlertToast;
-  el.innerHTML = `<span class="map-alert-emoji">${emoji}</span><span class="map-alert-text"><strong>${escapeHtml(
-    name
-  )}</strong> ${label} cerca de acá.</span><a class="map-alert-link" href="${googleMapsLink(lat, lng)}" target="_blank" rel="noopener">Ver en Maps</a>`;
-  el.classList.remove("hidden");
-  // Fuerza un reflow antes de agregar la clase que dispara la transicion de
-  // entrada -- si se agrega en el mismo tick que se saca "hidden", el
-  // navegador puede no animar la primera vez.
-  void el.offsetWidth;
-  el.classList.add("show");
-  clearTimeout(el._hideTimeout);
-  el._hideTimeout = setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.classList.add("hidden"), 400);
-  }, 8000);
-}
-
-function openMapPanel() {
-  els.mapPanel.classList.remove("hidden");
-  ensureLeafletMap();
-  // El mapa se crea (la primera vez) con el panel todavia oculto -- Leaflet
-  // mide el contenedor en ese momento y se queda con un tamano incorrecto.
-  // invalidateSize() lo hace medir de nuevo, ya con el panel visible.
-  setTimeout(() => leafletMap.invalidateSize(), 50);
-}
-
-els.openMapBtn.addEventListener("click", openMapPanel);
-els.mapCloseBtn.addEventListener("click", () => {
-  els.mapPanel.classList.add("hidden");
-  pendingMapClickKind = null;
-  els.mapHint.textContent = "";
-});
-
-els.reportPoliceBtn.addEventListener("click", () => reportAtCurrentPosition("police"));
-els.reportAccidentBtn.addEventListener("click", () => reportAtCurrentPosition("accident"));
-
-els.sharePositionBtn.addEventListener("click", async () => {
-  try {
-    const { lat, lng } = await getCurrentPositionAsync();
-    sendSharePosition(lat, lng);
-    addOrUpdateMapMarker(
-      `pos-${userId}`,
-      lat,
-      lng,
-      "📍",
-      `<b>Vos</b><br><a href="${googleMapsLink(lat, lng)}" target="_blank" rel="noopener">Abrir en Google Maps</a>`,
-      true
-    );
-    els.mapHint.textContent = "";
-  } catch (err) {
-    els.mapHint.textContent = "No se pudo acceder a tu ubicación. Revisá los permisos del navegador.";
   }
 });
