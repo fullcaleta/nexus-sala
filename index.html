@@ -6,7 +6,8 @@
   <title>NEXUS — Sala General</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=38" />
+  <link rel="stylesheet" href="css/style.css?v=39" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -33,9 +34,8 @@
       <!-- No borrar: aviso legal/etico sobre el moderador. Se borro por
            accidente en ediciones anteriores hechas directo desde GitHub. -->
       <p class="consent-notice">
-        Se te concede el privilegio de comunicarte con los demás participantes de la sala.
-        Al aceptar los permisos de este sitio, autorizas a que un moderador pueda escuchar tu conversación, incluso si te silencias o apagas tu cámara.
-        Te pedimos que mantengas un comportamiento respetuoso en todo momento. Evita el uso de lenguaje ofensivo, conductas inapropiadas, ruidos intencionales o cualquier acción que afecte la experiencia de los demás usuarios.
+        Al entrar, autorizás a que un moderador pueda escuchar/ver tu audio y video en todo momento, incluso si te silenciás o apagás la cámara.
+        Mantené un comportamiento respetuoso: evitá lenguaje ofensivo o conductas que afecten a los demás.
       </p>
     </div>
   </main>
@@ -83,6 +83,10 @@
         <div class="control-item">
           <button id="notify-btn" class="btn btn-icon" title="Activar notificaciones">🔕</button>
           <span id="notify-label" class="control-label">Avisos</span>
+        </div>
+        <div class="control-item">
+          <button id="open-map-btn" class="btn btn-icon" title="Mapa: policía, accidentes, ubicación">🗺️</button>
+          <span class="control-label">Mapa</span>
         </div>
         <div class="control-item">
           <button id="leave-btn" class="btn btn-danger" title="Salir de la sala">Salir</button>
@@ -160,6 +164,27 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=114"></script>
+  <!-- Mapa: reportar policia/accidente y compartir/ver posiciones (ver
+       openMapPanel en app.js). Leaflet + OpenStreetMap, sin clave de API. -->
+  <div id="map-panel" class="map-panel hidden">
+    <div class="map-panel-header">
+      <span>Mapa</span>
+      <button type="button" id="map-close-btn" class="map-close-btn" title="Cerrar">✕</button>
+    </div>
+    <div class="map-panel-toolbar">
+      <button type="button" id="report-police-btn" class="btn btn-icon" title="Reportar policía en mi ubicación">🚨</button>
+      <button type="button" id="report-accident-btn" class="btn btn-icon" title="Reportar accidente en mi ubicación">⚠️</button>
+      <button type="button" id="share-position-btn" class="btn btn-icon" title="Compartir mi ubicación">📍</button>
+    </div>
+    <div id="map-container" class="map-container"></div>
+    <p id="map-hint" class="map-hint"></p>
+  </div>
+
+  <!-- Aviso flotante cuando alguien reporta policia/accidente -- se ve
+       aunque el mapa este cerrado (ver showMapAlertToast en app.js). -->
+  <div id="map-alert-toast" class="map-alert-toast hidden"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="js/app.js?v=115"></script>
 </body>
 </html>

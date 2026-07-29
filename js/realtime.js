@@ -188,6 +188,17 @@ export function sendSignal(to, signalType, payload) {
   sendMessage({ type: "signal", to, signalType, payload });
 }
 
+// Mapa: reportar policia/accidente en un punto (kind: "police"|"accident")
+// o compartir la posicion propia -- ninguno de los dos queda guardado en
+// el servidor, son avisos puntuales para quien este conectado ahora.
+export function sendMapReport(kind, lat, lng) {
+  sendMessage({ type: "map-report", kind, lat, lng });
+}
+
+export function sendSharePosition(lat, lng) {
+  sendMessage({ type: "share-position", lat, lng });
+}
+
 export function sendDmMedia(to, mediaKind, fileId) {
   sendMessage({ type: "dm-media", to, mediaKind, fileId });
 }
