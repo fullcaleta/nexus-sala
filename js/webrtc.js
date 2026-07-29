@@ -1,4 +1,4 @@
-import { sendSignal, on as onRealtime } from "./realtime.js?v=9";
+import { sendSignal, on as onRealtime } from "./realtime.js?v=11";
 
 // Desde la migracion a SFU (ver js/sfu.js), este archivo maneja SOLO la
 // llamada privada 1 a 1 -- el video/audio normal de la sala general ya no
