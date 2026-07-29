@@ -840,10 +840,10 @@ async function joinRoom() {
       // es lo que de verdad oculta/muestra el video cuando el otro
       // participante apaga/prende su camara en plena llamada.
       els.callPanel.classList.toggle("has-remote-video", !muted);
-      // Mismo empujon que en connectIncomingCallTrack: en Safari/iPhone
-      // viejo el video puede quedar congelado en el primer cuadro al pasar
-      // de display:none a visible si ya estaba "reproduciendo" de antes.
-      if (!muted) els.callRemoteVideo.play().catch(() => {});
+      // Mismo empujon que en connectIncomingCallTrack (ver nudgeVideoRepaint):
+      // en Safari/iPhone viejo el video puede quedar congelado en el primer
+      // cuadro al pasar de display:none a visible.
+      if (!muted) nudgeVideoRepaint(els.callRemoteVideo);
     },
   });
   // Pone al dia sobre quien ya estaba mandando camara/mic antes de entrar
@@ -1478,6 +1478,23 @@ function handleCallTrack(peerId, track) {
   connectIncomingCallTrack(track);
 }
 
+// En Safari/iPhone viejo (iPhone 7), un <video> que ya esta "reproduciendo"
+// mientras su contenedor esta en display:none (ver .call-panel-media en
+// style.css, oculto hasta que se agrega la clase has-remote-video/
+// has-local-video) se queda congelado en el primer cuadro incluso despues
+// de mostrarlo -- llamar a play() de nuevo no alcanza porque el video ya
+// estaba "playing" internamente, el problema es que WebKit no vuelve a
+// pintarlo solo. Lo que de verdad lo destraba es forzar un reflow real del
+// PROPIO elemento (no solo del contenedor), como el que se da sin querer al
+// maximizar el panel (ese camino mide y aplica un ancho/alto nuevo con JS).
+function nudgeVideoRepaint(video) {
+  const prevDisplay = video.style.display;
+  video.style.display = "none";
+  void video.offsetHeight; // fuerza el reflow antes de volver a mostrarlo
+  video.style.display = prevDisplay;
+  video.play().catch(() => {});
+}
+
 function connectIncomingCallTrack(track) {
   if (track.kind === "audio") {
     connectCallAudio(track);
@@ -1489,15 +1506,9 @@ function connectIncomingCallTrack(track) {
   callRemoteTracks.add(track);
   els.callRemoteVideo.srcObject = new MediaStream([...callRemoteTracks]);
   els.callRemoteVideo.play().catch(() => {});
-  // En Safari/iPhone viejo (iPhone 7), un <video> que arranca a reproducir
-  // mientras su contenedor esta en display:none (ver .call-panel-media en
-  // style.css, oculto hasta que se agrega esta clase) se queda "congelado"
-  // en el primer cuadro -- no se nota hasta que algo fuerza un reflow real,
-  // como maximizar el panel. Reintentar play() justo despues de mostrarlo
-  // le da ese empujon sin esperar a que el usuario maximice.
   track.addEventListener("unmute", () => {
     els.callPanel.classList.add("has-remote-video");
-    els.callRemoteVideo.play().catch(() => {});
+    nudgeVideoRepaint(els.callRemoteVideo);
   });
   track.addEventListener("mute", () => els.callPanel.classList.remove("has-remote-video"));
 }
